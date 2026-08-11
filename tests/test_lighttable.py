@@ -12,6 +12,7 @@ from apps.lighttable.core import (  # noqa: E402
     IMAGE_EXTS,
     add_favorite,
     default_favorites,
+    filter_paths,
     is_image_path,
     load_favorites,
     mounted_drives,
@@ -195,6 +196,37 @@ class FavoritesTests(unittest.TestCase):
             save_favorites(["/run/media/alex/citadel"], store)
             add_favorite(Path(tmp), store)
             self.assertIn(Path("/run/media/alex/citadel"), load_favorites(store))
+
+
+class FilterTests(unittest.TestCase):
+    def test_matches_every_word_in_any_order(self) -> None:
+        paths = ["/a/car_red_04.png", "/a/red_house.png", "/a/blue_car.png"]
+        self.assertEqual(["/a/car_red_04.png"], filter_paths(paths, "red car"))
+        self.assertEqual(["/a/car_red_04.png"], filter_paths(paths, "car red"))
+
+    def test_is_case_insensitive(self) -> None:
+        paths = ["/a/one.png", "/a/SHOOT_two.png"]
+        self.assertEqual(["/a/SHOOT_two.png"], filter_paths(paths, "shoot"))
+
+    def test_subfolders_below_the_root_are_searchable(self) -> None:
+        # The sheet is recursive, so "apollo" has to find what is inside apollo_11_retro/.
+        paths = ["/pics/apollo_11_retro/a.png", "/pics/other/b.png", "/pics/apollo.png"]
+        self.assertEqual(["/pics/apollo_11_retro/a.png", "/pics/apollo.png"],
+                         filter_paths(paths, "apollo", "/pics"))
+
+    def test_the_folder_you_are_in_does_not_match_everything(self) -> None:
+        # Without this, searching "pics" inside /pics would match every image.
+        paths = ["/pics/a.png", "/pics/b.png"]
+        self.assertEqual([], filter_paths(paths, "pics", "/pics"))
+        self.assertEqual([], filter_paths(paths, "pics", "/pics/"))
+
+    def test_empty_query_keeps_everything_in_order(self) -> None:
+        paths = ["/a/b.png", "/a/a.png"]
+        self.assertEqual(paths, filter_paths(paths, ""))
+        self.assertEqual(paths, filter_paths(paths, "   "))
+
+    def test_no_match_is_empty(self) -> None:
+        self.assertEqual([], filter_paths(["/a/b.png"], "nothing"))
 
 
 class DriveTests(unittest.TestCase):
@@ -381,6 +413,100 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 tab._set_favorite(shoot, False)
                 self.assertNotIn("shoot", [tab.places.item(row).text()
                                            for row in range(tab.places.count())])
+                from PyQt6.QtCore import QThreadPool as Pool
+                Pool.globalInstance().waitForDone(5000)
+                window.close()
+
+    def test_search_narrows_the_sheet_and_opens_the_gallery(self) -> None:
+        from PyQt6.QtGui import QImage
+
+        from apps.lighttable.app import LightTableWindow
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+                image = QImage(8, 8, QImage.Format.Format_RGB32)
+                image.fill(0xFF202020)
+                for name in ("red_car.png", "blue_car.png", "house.png"):
+                    image.save(str(Path(tmp) / name))
+                window = LightTableWindow(Path(tmp))
+                tab = window.current_tab()
+                self.assertEqual(3, tab.sheet.count())
+                self.assertFalse(tab.pane_visible("gallery"))  # opens in Focus
+
+                window.search.setText("car")
+                self.assertEqual(2, tab.sheet.count())
+                self.assertEqual(3, len(tab.all_paths))  # the folder is untouched
+                # Results you cannot see are not results.
+                self.assertTrue(tab.pane_visible("gallery"))
+                self.assertIn("2 of 3 images", tab.folder_info.text())
+
+                window.search.setText("red car")
+                self.assertEqual(1, tab.sheet.count())
+                window.search.setText("nothing here")
+                self.assertEqual(0, tab.sheet.count())
+
+                # Escape drops the filter and hands the keyboard back to the picture.
+                window._escape()
+                self.assertEqual("", window.search.text())
+                self.assertEqual(3, tab.sheet.count())
+
+                # Search is per tab: a new tab starts unfiltered, and switching back
+                # restores the box without re-running the filter.
+                window.search.setText("house")
+                window.new_tab(Path(tmp))
+                self.assertEqual("", window.search.text())
+                self.assertEqual(3, window.current_tab().sheet.count())
+                window.tabs.setCurrentIndex(0)
+                self.assertEqual("house", window.search.text())
+                self.assertEqual(1, tab.sheet.count())
+
+                from PyQt6.QtCore import QThreadPool as Pool
+                Pool.globalInstance().waitForDone(5000)
+                window.close()
+
+    def test_horizontal_wheel_scrolls_instead_of_stepping_images(self) -> None:
+        from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PyQt6.QtGui import QImage, QKeyEvent, QWheelEvent
+
+        from apps.lighttable.app import LightTableWindow
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+                image = QImage(8, 8, QImage.Format.Format_RGB32)
+                image.fill(0xFF202020)
+                for name in ("a.png", "b.png"):
+                    image.save(str(Path(tmp) / name))
+                window = LightTableWindow(Path(tmp))
+                view = window.current_tab().view
+                steps: list[int] = []
+                view.request_step.connect(steps.append)
+                panned: list[tuple[float, float]] = []
+                view.translate_view = lambda dx, dy: panned.append((dx, dy))
+
+                def wheel(dx: int, dy: int) -> None:
+                    view.wheelEvent(QWheelEvent(
+                        QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(dx, dy),
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.NoScrollPhase, False))
+
+                # The horizontal wheel scrolls the picture sideways, both directions,
+                # and no longer changes which image is on screen.
+                wheel(120, 0)
+                wheel(-120, 0)
+                self.assertEqual([(120, 0), (-120, 0)], panned)
+                self.assertEqual([], steps)
+
+                # Vertical wheel still zooms a flat image, and still does not step.
+                before = view.transform().m11()
+                wheel(0, 120)
+                self.assertGreater(view.transform().m11(), before)
+                self.assertEqual([], steps)
+
+                # Arrows still go to the next picture, so stepping did not go away.
+                view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right.value,
+                                             Qt.KeyboardModifier.NoModifier))
+                self.assertEqual([1], steps)
+
                 from PyQt6.QtCore import QThreadPool as Pool
                 Pool.globalInstance().waitForDone(5000)
                 window.close()

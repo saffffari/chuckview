@@ -135,6 +135,29 @@ def plan_import(sources: Iterable[str | os.PathLike], folder: Path) -> DropPlan:
     return DropPlan(tuple(copies), tuple(existing))
 
 
+def filter_paths(paths: Iterable[str], query: str, root: str | os.PathLike | None = None) -> list[str]:
+    """Narrow a scanned folder to the images matching every word of the query,
+    case-insensitively and in any order — so "red car" finds `car_red_04.png`.
+
+    The sheet is recursive, so a subfolder is part of an image's identity: matching runs
+    over the path *below the folder on screen*, which makes "apollo" find everything in
+    `apollo_11_retro/` as well as `apollo.png`. Nothing above that folder counts, or
+    every image would match the name of the folder you are already in.
+
+    An empty query is not a filter: it returns everything, in order."""
+    terms = query.lower().split()
+    if not terms:
+        return list(paths)
+    prefix = f"{os.fspath(root).rstrip(os.sep)}{os.sep}" if root is not None else ""
+    kept = []
+    for path in paths:
+        subject = path[len(prefix):] if prefix and path.startswith(prefix) else os.path.basename(path)
+        subject = subject.lower()
+        if all(term in subject for term in terms):
+            kept.append(path)
+    return kept
+
+
 def pasted_image_name(when: datetime) -> str:
     """Filename for raw image data (clipboard/drag) that has no source file of its own."""
     return when.strftime("Pasted %Y-%m-%d %H%M%S.png")

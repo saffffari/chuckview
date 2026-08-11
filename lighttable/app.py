@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Light Table — the 2D image viewer. Three columns, no buttons, ultra snappy.
 
-Columns: folder tree · recursive contact sheet (newest first) · viewport.
+Columns: places + folder tree · recursive contact sheet (newest first) · viewport.
 Controls: LMB pan · RMB drag zoom (horizontal RMB scrubs z-stacks) · scroll zoom
-(slices on stacks) · horizontal wheel / arrows / Space / Shift+Space next-prev ·
-MX forward button pans, back button holds a compare with the last-viewed image ·
+(slices on stacks) · horizontal wheel scrolls sideways · arrows / Space / Shift+Space
+next-prev · Ctrl+F searches the folder · MX forward button pans, back button holds a
+compare with the last-viewed image ·
 F fit · Shift+F fill · Ctrl+Shift+F focus (hide columns) · Alt+F fullscreen · 1 = 1:1.
 
 Files are files (Rule 8): drag an image out of the contact sheet — or out of the viewport
@@ -36,16 +37,17 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QApplication, QGraphicsPixmapItem,
     QGraphicsScene, QGraphicsView, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-    QListWidgetItem, QListView, QMainWindow, QMenu, QMessageBox, QPushButton,
+    QLineEdit, QListWidgetItem, QListView, QMainWindow, QMenu, QMessageBox, QPushButton,
     QSizePolicy, QSplitter, QTabWidget, QToolBar, QTreeView, QVBoxLayout,
     QWidget,
 )
 
 from apps.common import HOUSE_STYLE, INK, MUTE, PANEL, SELECT, configure_application
 from apps.lighttable.core import (
-    THUMB_SIZE, add_favorite, cache_dir, is_image_path, load_favorites, mounted_drives,
-    open_path_command, pasted_image_name, plan_import, remove_favorite, reveal_command,
-    scan_images, thumb_path_for, trash_command, tree_anchor, unique_destination,
+    THUMB_SIZE, add_favorite, cache_dir, filter_paths, is_image_path, load_favorites,
+    mounted_drives, open_path_command, pasted_image_name, plan_import, remove_favorite,
+    reveal_command, scan_images, thumb_path_for, trash_command, tree_anchor,
+    unique_destination,
 )
 
 # --- The material -----------------------------------------------------------------------
@@ -95,6 +97,9 @@ QListWidget#places, QTreeView#folders, QListWidget#sheet {{ background: {SLAB}; 
 QGraphicsView#canvas {{ background: transparent; border: 0; }}
 QSplitter::handle {{ background: {HAIR}; }}
 QWidget#rail {{ background: {GUTTER}; border-right: 1px solid {HAIR}; }}
+QLineEdit#search {{ background: {LIFT}; border: 1px solid {HAIR}; border-radius: 6px;
+                    padding: 4px 9px; color: {INK}; selection-background-color: {SELECT}; }}
+QLineEdit#search:focus {{ border-color: {SELECT}; }}
 """
 
 
@@ -305,8 +310,8 @@ class Viewport(QGraphicsView):
     # -- gestures ------------------------------------------------------------------
     def wheelEvent(self, event) -> None:
         dx, dy = event.angleDelta().x(), event.angleDelta().y()
-        if abs(dx) > abs(dy):  # MX horizontal wheel: next / previous image
-            self.request_step.emit(-1 if dx > 0 else 1)
+        if abs(dx) > abs(dy):  # horizontal wheel scrolls the picture sideways
+            self.translate_view(dx, 0)
         elif self.is_stack:  # vertical scroll steps stack slices
             self.set_slice(self.slice + (-1 if dy > 0 else 1))
         else:  # vertical scroll zooms flat images at the cursor
@@ -726,7 +731,9 @@ class Tab(QWidget):
         self.pool = QThreadPool.globalInstance()
         self.signal = ThumbSignal()
         self.signal.done.connect(self._thumb_ready)
-        self.paths: list[str] = []
+        self.all_paths: list[str] = []   # everything under the folder
+        self.paths: list[str] = []       # what the search leaves on the sheet
+        self.filter_text = ""
         self._syncing = False
 
         self.model = QFileSystemModel(self)
@@ -839,8 +846,22 @@ class Tab(QWidget):
         self.rescan()
 
     def rescan(self) -> None:
+        """Re-read the folder from disk, then show it through the current search."""
+        self.all_paths = [path for _mtime, path in scan_images(self.folder)]
+        self._fill_sheet()
+
+    def set_filter(self, query: str) -> None:
+        """Narrow the sheet by name. The folder is already scanned, so this never
+        touches the disk — it is the same images, fewer of them."""
+        query = query.strip()
+        if query == self.filter_text:
+            return
+        self.filter_text = query
+        self._fill_sheet()
+
+    def _fill_sheet(self) -> None:
         self.sheet.clear()
-        self.paths = [path for _mtime, path in scan_images(self.folder)]
+        self.paths = filter_paths(self.all_paths, self.filter_text, self.folder)
         # A full-size transparent placeholder, not an empty QIcon: with uniform item
         # sizes the view caches the decoration size off the first icon it sees, so an
         # empty one makes every thumbnail that lands later draw as a speck. Only ever
@@ -860,9 +881,14 @@ class Tab(QWidget):
                 self.pool.start(ThumbJob(row, path, self.signal))
         if self.paths:
             self.sheet.setCurrentRow(0)
+        self.folder_info.setText(f"{self.folder}\n{self._count_line()}")
+
+    def _count_line(self) -> str:
+        if self.filter_text:
+            return (f"{len(self.paths)} of {len(self.all_paths)} images "
+                    f"matching “{self.filter_text}”")
         newest = Path(self.paths[0]).name if self.paths else "—"
-        self.folder_info.setText(
-            f"{self.folder}\n{len(self.paths)} images (recursive) · newest: {newest}")
+        return f"{len(self.paths)} images (recursive) · newest: {newest}"
 
     def _thumb_ready(self, row: int, path: str, thumb_file: str) -> None:
         if row < self.sheet.count() and self.paths[row] == path:
@@ -1152,6 +1178,7 @@ class LightTableWindow(QMainWindow):
         self.tabs.tabCloseRequested.connect(self._close_tab)
         self.tabs.tabBarDoubleClicked.connect(self._rename_tab)
         self.tabs.currentChanged.connect(self._sync_pane_actions)
+        self.tabs.currentChanged.connect(self._sync_search)
         add_tab = QPushButton("＋")
         add_tab.setToolTip("New tab (Ctrl+T)")
         add_tab.setFixedSize(30, 26)
@@ -1236,6 +1263,7 @@ class LightTableWindow(QMainWindow):
         act(view_menu, "Fit", "F", lambda: self.current_tab().view.fit())
         act(view_menu, "Fill", "Shift+F", lambda: self.current_tab().view.fill())
         act(view_menu, "1:1", "1", lambda: self.current_tab().view.one_to_one())
+        act(edit_menu, "Search…", "Ctrl+F", self.focus_search)
         act(view_menu, "Details", "W", self.toggle_details)
         act(view_menu, "Focus Mode", "Ctrl+Shift+F", self.toggle_focus)
         act(view_menu, "Fullscreen", "Alt+F", self.toggle_fullscreen)
@@ -1255,6 +1283,16 @@ class LightTableWindow(QMainWindow):
             action.triggered.connect(fn)
             bar.addAction(action)
             return action
+
+        # Top left, ahead of everything: type to narrow the folder you are looking at.
+        self.search = QLineEdit()
+        self.search.setObjectName("search")
+        self.search.setPlaceholderText("Search this folder…")
+        self.search.setClearButtonEnabled(True)
+        self.search.setFixedWidth(230)
+        self.search.textChanged.connect(self._search_changed)
+        bar.addWidget(self.search)
+        bar.addSeparator()
 
         button("＋ Tab", "New tab", lambda: self.new_tab(self.current_tab().folder))
         bar.addSeparator()
@@ -1282,6 +1320,38 @@ class LightTableWindow(QMainWindow):
         self.focus_action.setChecked(True)
         self.focus_action.triggered.connect(self._set_focus)
         bar.addAction(self.focus_action)
+
+    def _search_changed(self, text: str) -> None:
+        """Searching is per tab — each tab is its own folder and its own question."""
+        tab = self.current_tab()
+        if tab is None:
+            return
+        tab.set_filter(text)
+        # Results you cannot see are not results: a search opens the Gallery if the
+        # window is in Focus. Clearing the box leaves it open — you asked for it once.
+        if text.strip() and not tab.pane_visible("gallery"):
+            self._set_current_pane("gallery", True)
+            self._sync_pane_actions()
+
+    def _sync_search(self, *args) -> None:
+        """Show the incoming tab's own search, without re-filtering it on the way in."""
+        tab = self.current_tab()
+        if tab is None or not hasattr(self, "search"):
+            return
+        self.search.blockSignals(True)
+        self.search.setText(tab.filter_text)
+        self.search.blockSignals(False)
+
+    def focus_search(self) -> None:
+        self.search.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.search.selectAll()
+
+    def clear_search(self) -> None:
+        """Escape out of a search: drop the filter, hand the keyboard back to the picture."""
+        self.search.clear()
+        tab = self.current_tab()
+        if tab is not None:
+            tab.view.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def _set_current_pane(self, pane: str, visible: bool) -> None:
         tab = self.current_tab()
@@ -1350,7 +1420,9 @@ class LightTableWindow(QMainWindow):
             self.tabs.widget(index).rail.setVisible(not self.isFullScreen())
 
     def _escape(self) -> None:
-        if self.isFullScreen():
+        if self.search.hasFocus() or self.search.text():
+            self.clear_search()
+        elif self.isFullScreen():
             self.showNormal()
             self._sync_rails()
         elif self.focus_mode:

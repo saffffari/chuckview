@@ -38,12 +38,19 @@ handle between them to trade one for the other.
 - **LMB drag** pan · **Ctrl+LMB drag** carries the picture out to another app · **RMB drag** zoom
   (on z-stacks, horizontal RMB drag scrubs slices)
 - **Scroll** zoom at cursor on flat images; steps slices on z-stacks
-- **Horizontal wheel / ← → / Space / Shift+Space** previous–next image
+- **Horizontal wheel** scrolls the picture sideways — it does not change image
+- **← → / Space / Shift+Space** previous–next image
 - **MX Master**: forward button pans; back button holds a compare with the last-viewed image
 - **RMB drag on the contact sheet** resizes thumbnails; a plain **RMB click** (no drag) opens the
   context menu
 - **Shift-click** selects consecutive images, **Ctrl-click** toggles one; drag selections onto a
   folder in the tree to move the files; File → New Folder… (Ctrl+Shift+N)
+- **Search** sits at the top left (`Ctrl+F`). Type to narrow the sheet to matching images —
+  every word has to match, in any order, anywhere in the path below the folder on screen, so
+  `retro cockpit` finds the twelve pictures in `retro cockpits/`. It filters what is already
+  scanned, so it never touches the disk; searching in Focus opens the Gallery, because results
+  you cannot see are not results. `Esc` clears it and hands the keyboard back to the picture.
+  Each tab keeps its own search.
 - **Top toolbar** exposes Copy, Paste, Rename, Copy Path, Reveal, pane toggles, and Focus without
   hiding the matching keyboard shortcuts.
 - **W** toggles the two detail panels — folder facts under the tree, image facts under the sheet
