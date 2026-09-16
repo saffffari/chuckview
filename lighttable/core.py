@@ -364,3 +364,95 @@ def tree_anchor(folder: str | os.PathLike, mounts: Iterable[str | os.PathLike] |
     if contained:
         return max(contained, key=lambda c: len(str(c)))
     return Path(target.anchor or "/")
+
+
+# --- Marks: the quick collection and the flagged set -----------------------------------
+# Two sets of pictures that live outside any folder. The quick collection is the shelf you
+# sweep things onto while you look (A); flags are the keepers you mark on the way past (F).
+# Both are the same thing underneath — an ordered list of absolute paths — and both are
+# stored the way favorites are: one flat text file each, one path per line, editable by
+# hand (Rule 2). Marking an image never moves it, copies it, or writes to it: files are
+# files, and a mark is a note we keep about one, not a change to it.
+
+COLLECTIONS: dict[str, tuple[str, str]] = {
+    "quick": ("Quick Collection", "lighttable-quick.txt"),
+    "flagged": ("Flagged", "lighttable-flags.txt"),
+}
+
+
+def collection_title(name: str) -> str:
+    """What this set is called on screen."""
+    return COLLECTIONS[name][0]
+
+
+def collection_file(name: str) -> Path:
+    return config_dir() / COLLECTIONS[name][1]
+
+
+def load_collection(name: str, path: Path | None = None) -> list[Path]:
+    """Read one set, in the order it was built. Missing file means an empty set — a mark
+    you have never made is not an error. Paths that no longer exist stay in the file: an
+    unplugged drive has not un-flagged anything."""
+    source = Path(path) if path is not None else collection_file(name)
+    try:
+        lines = source.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    return _dedupe(
+        Path(stripped).expanduser()
+        for line in lines
+        if (stripped := line.strip()) and not stripped.startswith("#")
+    )
+
+
+def save_collection(name: str, paths: Iterable[str | os.PathLike],
+                    path: Path | None = None) -> Path:
+    """Write one set back, one absolute path per line, with a header you can read."""
+    target = Path(path) if path is not None else collection_file(name)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    ordered = _dedupe(Path(item).expanduser() for item in paths)
+    body = "\n".join(str(item) for item in ordered)
+    target.write_text(
+        f"# Light Table — {collection_title(name)}. One image per line. Edit freely.\n"
+        + body + ("\n" if body else ""),
+        encoding="utf-8",
+    )
+    return target
+
+
+def toggle_collection(name: str, images: Iterable[str | os.PathLike],
+                      path: Path | None = None) -> tuple[list[Path], bool]:
+    """Put a selection in the set, or take it out — the whole point of one key doing both.
+
+    A mixed selection goes *in*: with some of the frames in the set and some out, the
+    thing you meant by pressing the key was "all of these", not "undo half of them".
+    Returns the new set and whether it added."""
+    current = load_collection(name, path)
+    wanted = _dedupe(Path(image).expanduser() for image in images)
+    if not wanted:
+        return current, False
+    present = set(map(str, current))
+    adding = any(str(image) not in present for image in wanted)
+    if adding:
+        updated = current + [image for image in wanted if str(image) not in present]
+    else:
+        drop = set(map(str, wanted))
+        updated = [image for image in current if str(image) not in drop]
+    save_collection(name, updated, path)
+    return updated, adding
+
+
+def collection_members(name: str, path: Path | None = None) -> list[str]:
+    """The set as the contact sheet should show it: the files that are actually there
+    right now, still in the order they were added — the one order in the app that is
+    yours rather than the disk's."""
+    return [str(item) for item in load_collection(name, path) if item.is_file()]
+
+
+def load_marks() -> dict[str, set[str]]:
+    """Every set at once, as membership tests.
+
+    The contact sheet asks "is this one marked?" once per thumbnail, thousands of times
+    in a big folder, so it holds the answer to that question rather than the files: two
+    reads when something changes, none while you scroll."""
+    return {name: {str(item) for item in load_collection(name)} for name in COLLECTIONS}

@@ -1,32 +1,47 @@
+import contextlib
 import os
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import numpy as np  # noqa: E402
+from PyQt6.QtCore import QEvent, QPoint, QRect, QThreadPool  # noqa: E402
+from PyQt6.QtWidgets import QMenu  # noqa: E402
+
+from apps.lighttable import glass, panels  # noqa: E402
+from apps.lighttable.app import DEFAULT_PANELS  # noqa: E402
+from apps.lighttable.panels import PanelState  # noqa: E402
 from apps.lighttable.core import (  # noqa: E402
     IMAGE_EXTS,
     add_favorite,
+    collection_file,
+    collection_members,
     default_favorites,
     filter_paths,
     is_image_path,
+    load_collection,
     load_favorites,
+    load_marks,
     mounted_drives,
-    remove_favorite,
-    save_favorites,
-    tree_anchor,
     open_path_command,
     pasted_image_name,
     plan_import,
+    remove_favorite,
     reveal_command,
+    save_collection,
+    save_favorites,
     scan_images,
     thumb_key,
     thumb_path_for,
+    toggle_collection,
     trash_command,
+    tree_anchor,
     unique_destination,
 )
 
@@ -302,9 +317,11 @@ class LightTableWindowSmokeTests(unittest.TestCase):
 
         from apps.lighttable.app import LightTableWindow, load_frames
 
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
             # Thumbnails must land in a temporary cache, never ~/.cache/2photon.
-            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
                 image = QImage(8, 8, QImage.Format.Format_RGB32)
                 image.fill(0xFF202020)
                 image.save(str(Path(tmp) / "shot.png"))
@@ -363,8 +380,10 @@ class LightTableWindowSmokeTests(unittest.TestCase):
     def test_disclosure_rail_opens_each_column(self) -> None:
         from apps.lighttable.app import LightTableWindow
 
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache:
-            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
                 window = LightTableWindow(Path(tmp))
                 tab = window.current_tab()
                 # Focus: both columns closed, both disclosure tabs unchecked.
@@ -422,8 +441,10 @@ class LightTableWindowSmokeTests(unittest.TestCase):
 
         from apps.lighttable.app import LightTableWindow
 
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache:
-            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
                 image = QImage(8, 8, QImage.Format.Format_RGB32)
                 image.fill(0xFF202020)
                 for name in ("red_car.png", "blue_car.png", "house.png"):
@@ -470,8 +491,10 @@ class LightTableWindowSmokeTests(unittest.TestCase):
 
         from apps.lighttable.app import LightTableWindow
 
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache:
-            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
                 image = QImage(8, 8, QImage.Format.Format_RGB32)
                 image.fill(0xFF202020)
                 for name in ("a.png", "b.png"):
@@ -516,8 +539,10 @@ class LightTableWindowSmokeTests(unittest.TestCase):
 
         from apps.lighttable.app import LightTableWindow
 
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache:
-            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
                 shot = Path(tmp) / "shot.png"
                 image = QImage(8, 8, QImage.Format.Format_RGB32)
                 image.fill(0xFF202020)
@@ -559,6 +584,524 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 self.assertEqual({}, carried)
                 from PyQt6.QtCore import QThreadPool as Pool
                 Pool.globalInstance().waitForDone(5000)
+                window.close()
+
+
+class CollectionTests(unittest.TestCase):
+    """The quick collection and the flags: two ordered lists of paths in two text files."""
+
+    def setUp(self) -> None:
+        self.config = tempfile.TemporaryDirectory()
+        patcher = mock.patch.dict(os.environ, {"TWOPHOTON_CONFIG_HOME": self.config.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.config.cleanup)
+
+    def test_a_set_starts_empty_and_survives_a_round_trip(self) -> None:
+        self.assertEqual([], load_collection("quick"))
+        self.assertEqual([], collection_members("flagged"))
+        save_collection("quick", ["/tmp/a.png", "/tmp/b.png"])
+        self.assertEqual([Path("/tmp/a.png"), Path("/tmp/b.png")], load_collection("quick"))
+        # Readable and editable by hand: a comment and some whitespace change nothing.
+        collection_file("quick").write_text(
+            "# mine\n/tmp/a.png\n\n  /tmp/c.png  \n", encoding="utf-8")
+        self.assertEqual([Path("/tmp/a.png"), Path("/tmp/c.png")], load_collection("quick"))
+
+    def test_one_key_both_directions(self) -> None:
+        _set, added = toggle_collection("quick", ["/tmp/a.png"])
+        self.assertTrue(added)
+        self.assertEqual([Path("/tmp/a.png")], load_collection("quick"))
+        _set, added = toggle_collection("quick", ["/tmp/a.png"])
+        self.assertFalse(added)
+        self.assertEqual([], load_collection("quick"))
+
+    def test_a_mixed_selection_goes_in(self) -> None:
+        """Some in, some out, one keypress: "all of these", not "undo half of them"."""
+        toggle_collection("flagged", ["/tmp/a.png"])
+        _set, added = toggle_collection("flagged", ["/tmp/a.png", "/tmp/b.png"])
+        self.assertTrue(added)
+        self.assertEqual([Path("/tmp/a.png"), Path("/tmp/b.png")], load_collection("flagged"))
+        # Now that both are in, the same keypress takes both out.
+        _set, added = toggle_collection("flagged", ["/tmp/a.png", "/tmp/b.png"])
+        self.assertFalse(added)
+        self.assertEqual([], load_collection("flagged"))
+
+    def test_nothing_selected_changes_nothing(self) -> None:
+        save_collection("quick", ["/tmp/a.png"])
+        _set, added = toggle_collection("quick", [])
+        self.assertFalse(added)
+        self.assertEqual([Path("/tmp/a.png")], load_collection("quick"))
+
+    def test_the_two_sets_are_independent_and_read_as_membership(self) -> None:
+        toggle_collection("quick", ["/tmp/a.png"])
+        toggle_collection("flagged", ["/tmp/b.png"])
+        self.assertEqual({"quick": {"/tmp/a.png"}, "flagged": {"/tmp/b.png"}}, load_marks())
+
+    def test_a_missing_file_stays_marked_but_is_not_shown(self) -> None:
+        """An unplugged drive has not un-flagged anything — but the sheet can only show
+        pictures that are actually there."""
+        with tempfile.TemporaryDirectory() as tmp:
+            here = Path(tmp) / "here.png"
+            here.write_bytes(b"")
+            save_collection("quick", [str(here), "/nowhere/gone.png"])
+            self.assertEqual(2, len(load_collection("quick")))
+            self.assertEqual([str(here)], collection_members("quick"))
+
+    def test_the_order_is_the_order_you_marked_them(self) -> None:
+        toggle_collection("quick", ["/tmp/b.png"])
+        toggle_collection("quick", ["/tmp/a.png"])
+        self.assertEqual([Path("/tmp/b.png"), Path("/tmp/a.png")], load_collection("quick"))
+
+
+class GlassTests(unittest.TestCase):
+    """The material: read off the desktop, and computed only where glass bends light."""
+
+    def test_settings_come_from_the_desktops_own_effect(self) -> None:
+        text = ("[Effect-other]\nRefractionStrength=99\n\n"
+                "[Effect-blurplus]\nTopCornerRadius=20\nRefractionEdgeSize=8\n"
+                "RimGlow=false\nNoiseStrength=nonsense\n\n[Effect-later]\nRimGlow=true\n")
+        values = glass.read_group(text, glass.KWIN_GROUP)
+        self.assertEqual({"TopCornerRadius": "20", "RefractionEdgeSize": "8",
+                          "RimGlow": "false", "NoiseStrength": "nonsense"}, values)
+        settings = glass.settings_from_group(values)
+        self.assertEqual(20.0, settings.top_radius)
+        self.assertEqual(8.0, settings.edge)
+        self.assertFalse(settings.rim_glow)
+        # A value that will not parse keeps the default rather than taking the glass down.
+        self.assertEqual(glass.DEFAULTS.noise, settings.noise)
+        self.assertEqual(glass.DEFAULTS.strength, settings.strength)
+
+    def test_no_kwin_no_problem(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(glass.DEFAULTS,
+                             glass.read_glass_settings(Path(tmp) / "not-here"))
+
+    def test_the_distance_field_knows_inside_from_edge(self) -> None:
+        sdf = glass.rounded_box_sdf(60, 40, 10)
+        self.assertLess(sdf[20, 30], -10)          # the middle is deep inside
+        # The left-hand pixel centre sits half a pixel inside the edge.
+        self.assertAlmostEqual(sdf[20, 0], -0.5, places=4)
+        self.assertGreater(sdf[0, 0], 0)           # the corner is outside the round
+        self.assertEqual((40, 60), sdf.shape)
+
+    def test_the_glass_is_only_computed_where_it_bends(self) -> None:
+        maps = glass.Maps(200, 160, glass.DEFAULTS)
+        self.assertLess(maps.band.size, 200 * 160 * 0.35)   # a band, not the whole pane
+        rows, columns = np.divmod(maps.band, 200)
+        self.assertEqual(0, rows.min())                      # and it reaches every edge
+        self.assertEqual(159, rows.max())
+        self.assertEqual(0, columns.min())
+        self.assertEqual(199, columns.max())
+        middle = 80 * 200 + 100
+        self.assertNotIn(middle, set(maps.band.tolist()))
+
+    def test_the_flat_middle_comes_back_transparent_and_the_edge_solid(self) -> None:
+        backdrop = np.full((160, 200, 3), 200, dtype=np.uint8)
+        out = glass.MaterialCache(glass.DEFAULTS).rim_image(backdrop, 200, 160,
+                                                            (13, 13, 13), 0.62)
+        self.assertEqual((160, 200, 4), out.shape)
+        self.assertEqual(0, out[80, 100, 3])     # middle: Qt fills that, not us
+        self.assertEqual(255, out[80, 0, 3])     # edge: ours
+        self.assertEqual(0, out[0, 0, 3])        # outside the rounded corner: nothing
+        # Tinted, so the edge is darker than the backdrop it is standing on.
+        self.assertLess(int(out[80, 1, 0]), 200)
+
+    def test_refraction_disperses_the_channels(self) -> None:
+        """Physically based refraction bends red furthest and blue least, which is why
+        the three channels read from three different places."""
+        maps = glass.Maps(200, 160, glass.DEFAULTS)
+        red, green, blue = maps.samples
+        self.assertTrue((red != blue).any())
+        self.assertTrue((red != green).any())
+        flat = glass.Maps(200, 160, replace(glass.DEFAULTS, physical=False))
+        self.assertTrue((flat.samples[0] == flat.samples[2]).all())
+
+    def test_maps_are_cached_per_size(self) -> None:
+        cache = glass.MaterialCache(glass.DEFAULTS, limit=2)
+        first = cache.maps(100, 100)
+        self.assertIs(first, cache.maps(100, 100))
+        cache.maps(120, 100)
+        cache.maps(140, 100)          # over the limit: the oldest goes
+        self.assertIsNot(first, cache.maps(100, 100))
+
+
+class PanelLayoutTests(unittest.TestCase):
+    """Where the panels are: a rectangle each, and one line of text each on disk."""
+
+    AREA = QRect(0, 40, 1000, 760)
+
+    def test_docking_takes_the_whole_edge_under_the_command_bar(self) -> None:
+        left = panels.snap_geometry(PanelState("locations", width=300, snap="left"),
+                                    self.AREA)
+        self.assertEqual((0, 40, 300, 760), left.getRect())
+        right = panels.snap_geometry(PanelState("gallery", width=380, snap="right"),
+                                     self.AREA)
+        self.assertEqual((620, 40, 380, 760), right.getRect())
+        bottom = panels.snap_geometry(PanelState("info", height=150, snap="bottom"),
+                                      self.AREA)
+        self.assertEqual((0, 650, 1000, 150), bottom.getRect())
+
+    def test_a_free_panel_can_never_be_dragged_out_of_reach(self) -> None:
+        stray = PanelState("info", x=-4000, y=9000, width=300, height=200)
+        rect = panels.snap_geometry(stray, self.AREA)
+        self.assertGreaterEqual(rect.right(), self.AREA.left())
+        self.assertLessEqual(rect.top(), self.AREA.bottom())
+        self.assertGreaterEqual(rect.top(), self.AREA.top())
+
+    def test_only_a_panel_let_go_of_at_an_edge_docks(self) -> None:
+        """Where the pointer was, not where the panel was: a tall panel is near the top
+        and the bottom at once wherever you put it, so the panel cannot be the judge."""
+        self.assertEqual("left", panels.snap_for(QPoint(6, 400), self.AREA))
+        self.assertEqual("right", panels.snap_for(QPoint(995, 400), self.AREA))
+        self.assertEqual("top", panels.snap_for(QPoint(500, 46), self.AREA))
+        self.assertEqual("bottom", panels.snap_for(QPoint(500, 790), self.AREA))
+        self.assertEqual("free", panels.snap_for(QPoint(500, 400), self.AREA))
+        # A tall panel dropped in open water floats, however close its own edges are.
+        self.assertEqual("free", panels.snap_for(QPoint(360, 372), self.AREA))
+
+    def test_two_panels_on_one_edge_are_a_column_of_two(self) -> None:
+        states = [PanelState("locations", width=300, snap="left", open=True),
+                  PanelState("gallery", width=340, snap="left", open=True)]
+        rects = panels.share_edge(states, self.AREA)
+        self.assertEqual(40, rects["locations"].top())
+        self.assertEqual(rects["locations"].bottom() + 1, rects["gallery"].top())
+        self.assertEqual(self.AREA.bottom(), rects["gallery"].bottom())
+        # Each keeps its own width — sharing an edge is not sharing a size.
+        self.assertEqual(300, rects["locations"].width())
+        self.assertEqual(340, rects["gallery"].width())
+
+    def test_rolled_up_gives_the_edge_back(self) -> None:
+        """A collapsed panel is a header, not a full-height title bar — docked or not."""
+        rolled = PanelState("locations", width=300, snap="left", collapsed=True)
+        self.assertEqual(panels.HEADER,
+                         panels.snap_geometry(rolled, self.AREA).height())
+
+        states = [rolled, PanelState("gallery", width=340, snap="left", open=True)]
+        rects = panels.share_edge(states, self.AREA)
+        self.assertEqual(panels.HEADER, rects["locations"].height())
+        # The gallery gets everything the rolled-up one is not using.
+        self.assertEqual(rects["locations"].bottom() + 1, rects["gallery"].top())
+        self.assertEqual(self.AREA.bottom(), rects["gallery"].bottom())
+
+    def test_the_layout_is_one_readable_line_per_panel(self) -> None:
+        states = [PanelState("locations", 10, 20, 300, 500, True, "left", False),
+                  PanelState("gallery", 40, 50, 380, 600, False, "free", True)]
+        text = panels.format_layout(states)
+        self.assertIn("locations 10 20 300 500 1 left 0", text)
+        self.assertIn("gallery 40 50 380 600 0 free 1", text)
+        parsed = panels.parse_layout(text, DEFAULT_PANELS)
+        self.assertEqual(states[0], parsed["locations"])
+        self.assertEqual(states[1], parsed["gallery"])
+        # A panel the file says nothing about keeps its default.
+        self.assertEqual("info", parsed["info"].name)
+
+    def test_a_damaged_layout_falls_back_instead_of_failing(self) -> None:
+        defaults = {state.name: state for state in DEFAULT_PANELS}
+        text = ("# comment\nlocations not a number here at all\n"
+                "nonsense 1 2 3 4 1 left 0\ngallery 5 6 300 400 1 sideways 0\n")
+        parsed = panels.parse_layout(text, DEFAULT_PANELS)
+        self.assertEqual(defaults["locations"], parsed["locations"])
+        self.assertNotIn("nonsense", parsed)
+        self.assertEqual("free", parsed["gallery"].snap)  # an edge we do not have
+
+    def test_a_missing_layout_file_is_a_fresh_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded = panels.load_layout(DEFAULT_PANELS, Path(tmp) / "never-written.txt")
+            self.assertEqual({state.name: state for state in DEFAULT_PANELS}, loaded)
+
+
+class MarkingSmokeTests(unittest.TestCase):
+    """A and F, end to end, through the window that has to make them mean something."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PyQt6.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def build(self, stack, count=3):
+        """A window over `count` images in a throwaway folder, cache and config."""
+        from PyQt6.QtGui import QImage
+
+        from apps.lighttable.app import LightTableWindow
+
+        tmp = stack.enter_context(tempfile.TemporaryDirectory())
+        cache = stack.enter_context(tempfile.TemporaryDirectory())
+        config = stack.enter_context(tempfile.TemporaryDirectory())
+        stack.enter_context(mock.patch.dict(os.environ, {
+            "XDG_CACHE_HOME": cache, "TWOPHOTON_CONFIG_HOME": config}))
+        image = QImage(8, 8, QImage.Format.Format_RGB32)
+        image.fill(0xFF202020)
+        for index in range(count):
+            image.save(str(Path(tmp) / f"shot{index}.png"))
+        window = LightTableWindow(Path(tmp))
+        stack.callback(window.close)
+        return window, Path(tmp)
+
+    def test_a_and_f_mark_the_selection_both_ways(self) -> None:
+        from apps.lighttable.app import MARKS_ROLE
+
+        with contextlib.ExitStack() as stack:
+            window, folder = self.build(stack)
+            tab = window.current_tab()
+            tab.sheet.setCurrentRow(0)
+            first = tab.current_path()
+
+            tab.toggle_mark("quick")
+            self.assertEqual([Path(first)], load_collection("quick"))
+            self.assertEqual(("quick",), tab.sheet.item(0).data(MARKS_ROLE))
+            self.assertIn("Quick Collection", tab.image_info.text())
+
+            tab.toggle_mark("flagged")
+            self.assertEqual({"quick", "flagged"}, set(tab.sheet.item(0).data(MARKS_ROLE)))
+
+            # The same key again takes it back out, and the badge goes with it.
+            tab.toggle_mark("quick")
+            self.assertEqual([], load_collection("quick"))
+            self.assertEqual(("flagged",), tab.sheet.item(0).data(MARKS_ROLE))
+            QThreadPool.globalInstance().waitForDone(5000)
+
+    def test_marking_does_not_disturb_the_picture(self) -> None:
+        """Flagging is not selecting. Pressing F halfway through a pass must not decode
+        the file again and throw away wherever you had zoomed to."""
+        with contextlib.ExitStack() as stack:
+            window, _folder = self.build(stack)
+            tab = window.current_tab()
+            tab.sheet.setCurrentRow(0)
+            tab.view.zoom(3.0)
+            zoomed = tab.view.transform().m11()
+            shown = tab.view.item.pixmap().cacheKey()
+
+            tab.toggle_mark("flagged")
+            self.assertEqual(zoomed, tab.view.transform().m11())
+            self.assertEqual(shown, tab.view.item.pixmap().cacheKey())
+            self.assertIn("Flagged", tab.image_info.text())
+            QThreadPool.globalInstance().waitForDone(5000)
+
+    def test_marking_says_so_even_in_focus(self) -> None:
+        """Focus has no sheet and no sidebar, so the keypress has to leave a receipt."""
+        with contextlib.ExitStack() as stack:
+            window, _folder = self.build(stack)
+            tab = window.current_tab()
+            self.assertFalse(tab.pane_visible("gallery"))
+            tab.sheet.setCurrentRow(0)
+            tab.toggle_mark("flagged")
+            self.assertTrue(tab.toast.isVisibleTo(tab))
+            self.assertIn("added to Flagged", tab.toast.text())
+            tab.toggle_mark("flagged")
+            self.assertIn("removed from Flagged", tab.toast.text())
+            QThreadPool.globalInstance().waitForDone(5000)
+
+    def test_a_set_opens_in_the_sheet_like_a_folder(self) -> None:
+        from apps.lighttable.app import COLLECTION_ROLE
+
+        with contextlib.ExitStack() as stack:
+            window, folder = self.build(stack)
+            tab = window.current_tab()
+            tab.sheet.setCurrentRow(0)
+            tab.toggle_mark("flagged")
+            tab.sheet.setCurrentRow(1)
+            tab.toggle_mark("flagged")
+
+            # The sidebar carries both sets, with what is in them.
+            labels = [tab.places.item(row).text() for row in range(tab.places.count())]
+            self.assertIn("Quick Collection", labels)
+            self.assertTrue(any(text.startswith("Flagged") and "2" in text
+                                for text in labels))
+            row = next(tab.places.item(index) for index in range(tab.places.count())
+                       if tab.places.item(index).data(COLLECTION_ROLE) == "flagged")
+
+            tab.places.itemClicked.emit(row)
+            self.assertEqual("flagged", tab.collection)
+            self.assertEqual(2, tab.sheet.count())
+            self.assertIn("Flagged", tab.folder_info.text())
+            self.assertIn("in the order you marked them", tab.folder_info.text())
+            # The folder underneath has not moved: it is still where a paste lands.
+            self.assertEqual(folder, tab.folder)
+
+            # Unflagging while looking at the flagged set takes it off the sheet.
+            tab.sheet.setCurrentRow(0)
+            tab.toggle_mark("flagged")
+            self.assertEqual(1, tab.sheet.count())
+
+            # And picking a folder again leaves the set.
+            tab.set_folder(folder)
+            self.assertIsNone(tab.collection)
+            self.assertEqual(3, tab.sheet.count())
+            QThreadPool.globalInstance().waitForDone(5000)
+
+    def test_a_mark_made_in_one_tab_shows_in_the_other(self) -> None:
+        with contextlib.ExitStack() as stack:
+            window, folder = self.build(stack)
+            first = window.current_tab()
+            window.new_tab(folder)
+            second = window.current_tab()
+            first.sheet.setCurrentRow(0)
+            first.toggle_mark("quick")
+            self.assertEqual({str(Path(first.current_path()))}, second.marks["quick"])
+            QThreadPool.globalInstance().waitForDone(5000)
+
+    def test_the_letter_keys_step_aside_while_you_are_typing(self) -> None:
+        """A plain letter reaches a shortcut before the field you are typing in, so
+        searching for "a car" must not flag half the shoot."""
+        from PyQt6.QtGui import QFocusEvent
+
+        with contextlib.ExitStack() as stack:
+            window, _folder = self.build(stack)
+            letters = {action.text() for action in window.letter_actions}
+            self.assertIn("Flag", letters)
+            self.assertIn("Add to Quick Collection", letters)
+            self.assertIn("Fit", letters)
+            self.assertTrue(all(action.isEnabled() for action in window.letter_actions))
+
+            window.eventFilter(window.search, QFocusEvent(QEvent.Type.FocusIn))
+            self.assertFalse(any(action.isEnabled() for action in window.letter_actions))
+            window.eventFilter(window.search, QFocusEvent(QEvent.Type.FocusOut))
+            self.assertTrue(all(action.isEnabled() for action in window.letter_actions))
+            QThreadPool.globalInstance().waitForDone(5000)
+
+    def test_f_is_the_flag_key_and_zoom_moved_to_the_number_row(self) -> None:
+        with contextlib.ExitStack() as stack:
+            window, _folder = self.build(stack)
+            keys = {action.text(): action.shortcut().toString()
+                    for menu in window.menuBar().findChildren(QMenu)
+                    for action in menu.actions()}
+            self.assertEqual("F", keys["Flag"])
+            self.assertEqual("A", keys["Add to Quick Collection"])
+            self.assertEqual("0", keys["Fit"])
+            self.assertEqual("9", keys["Fill"])
+            self.assertEqual("1", keys["1:1"])
+            QThreadPool.globalInstance().waitForDone(5000)
+
+
+class PanelSmokeTests(unittest.TestCase):
+    """Panels float, dock, resize and are still there next time."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from PyQt6.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_panels_float_over_a_full_bleed_picture_and_can_be_moved(self) -> None:
+        from apps.lighttable.app import LightTableWindow
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
+                window = LightTableWindow(Path(tmp))
+                window.resize(1200, 800)
+                tab = window.current_tab()
+                self.app.processEvents()
+
+                # The viewport is the window, not a third of it.
+                self.assertEqual(tab.rect(), tab.view.geometry())
+
+                window.toggle_focus()
+                locations = tab.panels["locations"]
+                self.assertTrue(locations.isVisibleTo(tab))
+                self.assertEqual(tab.panel_area().left(), locations.geometry().left())
+                self.assertEqual(tab.panel_area().height(), locations.geometry().height())
+
+                # Drag it into open water: it stops being docked and keeps the geometry.
+                locations.state = replace(locations.state, x=400, y=300, snap="free",
+                                          width=320, height=240)
+                tab.relayout()
+                self.assertEqual((400, 300, 320, 240), locations.geometry().getRect())
+
+                # Shove it back against the right edge and it docks there full height.
+                locations.state = replace(locations.state,
+                                          x=tab.width() - 320, snap="right")
+                tab.relayout()
+                gallery = tab.panels["gallery"]
+                self.assertEqual(tab.width(), locations.geometry().right() + 1)
+                # The gallery is already docked there, so the two share the edge.
+                self.assertEqual(tab.panel_area().top(), locations.geometry().top())
+                self.assertEqual(locations.geometry().bottom() + 1,
+                                 gallery.geometry().top())
+                self.assertEqual(tab.panel_area().bottom(), gallery.geometry().bottom())
+
+                # Never smaller than you can grab hold of.
+                locations.state = replace(locations.state, snap="free", width=10, height=10)
+                tab.relayout()
+                self.assertGreaterEqual(locations.width(), 120)
+                QThreadPool.globalInstance().waitForDone(5000)
+                window.close()
+
+    def test_the_arrangement_is_kept_and_can_be_put_back(self) -> None:
+        from apps.lighttable.app import LightTableWindow
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
+                window = LightTableWindow(Path(tmp))
+                tab = window.current_tab()
+                tab.panels["gallery"].state = replace(
+                    tab.panels["gallery"].state, x=120, y=140, snap="free", open=True)
+                tab.relayout()
+                window.close()
+
+                # A window opened and closed without touching a panel writes nothing;
+                # this one was touched, so it left a file.
+                self.assertTrue(panels.layout_file().is_file())
+                again = LightTableWindow(Path(tmp))
+                self.assertEqual("free", again.layout_states["gallery"].snap)
+                self.assertEqual(120, again.current_tab().panels["gallery"].state.x)
+
+                again.reset_layout()
+                self.assertEqual("right", again.current_tab().panels["gallery"].state.snap)
+                QThreadPool.globalInstance().waitForDone(5000)
+                again.close()
+
+    def test_closing_the_last_panel_is_the_same_as_focus(self) -> None:
+        from apps.lighttable.app import LightTableWindow
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
+                window = LightTableWindow(Path(tmp))
+                tab = window.current_tab()
+                window.toggle_focus()
+                self.assertFalse(window.focus_action.isChecked())
+                tab.panels["gallery"].closed.emit("gallery")
+                self.assertFalse(tab.pane_visible("gallery"))
+                tab.panels["locations"].closed.emit("locations")
+                self.assertTrue(window.focus_action.isChecked())
+                QThreadPool.globalInstance().waitForDone(5000)
+                window.close()
+
+    def test_the_glass_samples_what_it_is_covering(self) -> None:
+        """The proof that the panels are transparent: a capture of the viewport exists,
+        and a crop of it comes back at the size of the panel standing on it."""
+        from PyQt6.QtGui import QImage
+
+        from apps.lighttable.app import LightTableWindow
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
+                image = QImage(64, 64, QImage.Format.Format_RGB32)
+                image.fill(0xFFCC4400)
+                image.save(str(Path(tmp) / "orange.png"))
+                window = LightTableWindow(Path(tmp))
+                window.resize(1200, 800)
+                window.show()
+                self.app.processEvents()
+                tab = window.current_tab()
+                window.toggle_focus()
+                self.app.processEvents()
+                tab._refresh_backdrop()
+
+                self.assertIsNotNone(tab.glass.backdrop.image)
+                crop = tab.glass.backdrop.crop(QRect(0, 0, 200, 160))
+                self.assertEqual((200, 160), (crop.width(), crop.height()))
+                pixels = panels.image_to_rgb(crop)
+                self.assertEqual((160, 200, 3), pixels.shape)
+                QThreadPool.globalInstance().waitForDone(5000)
                 window.close()
 
 
