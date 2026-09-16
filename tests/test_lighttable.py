@@ -193,9 +193,9 @@ class FavoritesTests(unittest.TestCase):
     def test_unplugged_favorite_is_kept_not_dropped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = Path(tmp) / "favorites.txt"
-            save_favorites(["/run/media/alex/citadel"], store)
+            save_favorites(["/citadel"], store)
             add_favorite(Path(tmp), store)
-            self.assertIn(Path("/run/media/alex/citadel"), load_favorites(store))
+            self.assertIn(Path("/citadel"), load_favorites(store))
 
 
 class FilterTests(unittest.TestCase):
@@ -275,10 +275,10 @@ class DriveTests(unittest.TestCase):
 
 class TreeAnchorTests(unittest.TestCase):
     def test_folder_on_a_drive_anchors_to_that_drive(self) -> None:
-        mounts = [Path("/run/media/alex/citadel"), Path("/run/media/alex/board_rack")]
+        mounts = [Path("/citadel"), Path("/board_rack")]
         self.assertEqual(
-            Path("/run/media/alex/citadel"),
-            tree_anchor("/run/media/alex/citadel/2026/shoot", mounts))
+            Path("/citadel"),
+            tree_anchor("/citadel/2026/shoot", mounts))
 
     def test_folder_under_home_anchors_to_home(self) -> None:
         self.assertEqual(Path.home(), tree_anchor(Path.home() / "Pictures", []))
