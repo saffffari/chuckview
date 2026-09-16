@@ -14,6 +14,8 @@ Icon=$here/assets/Lt.svg
 Terminal=false
 Categories=Graphics;Viewer;
 MimeType=image/png;image/jpeg;image/tiff;image/webp;image/bmp;image/gif;
+StartupNotify=true
+StartupWMClass=2photon-lighttable
 EOF
 update-desktop-database "$apps_dir" 2>/dev/null || true
 for mime in image/png image/jpeg image/tiff image/webp image/bmp image/gif; do

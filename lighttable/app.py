@@ -153,6 +153,9 @@ def local_image_urls(mime: QMimeData) -> list[str]:
 
 HERE = Path(__file__).resolve().parent
 ICON = HERE / "assets" / "Lt.svg"
+# The desktop entry install-default.sh writes, and the one the shortcut on the desktop
+# uses. Naming it in the app is what ties a running window back to its launcher.
+DESKTOP_ENTRY = "2photon-lighttable"
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 FAVORITE_ROLE = Qt.ItemDataRole.UserRole + 1    # pinned by the user vs. a live mount
@@ -1990,6 +1993,11 @@ def main(argv: list[str] | None = None) -> int:
 
     cache_dir().mkdir(parents=True, exist_ok=True)
     app = QApplication(argv if argv is not None else sys.argv)
+    # Say which desktop entry this window belongs to. Without it a Wayland compositor
+    # takes the app id from the executable, which for a Python app is "python3" — so the
+    # task bar and the window switcher show a Python icon instead of Lt, and the shortcut
+    # on the desktop never lights up as the thing that is running.
+    app.setDesktopFileName(DESKTOP_ENTRY)
     configure_application(app, "Light Table")
     app.setStyleSheet(HOUSE_STYLE + MATERIAL_STYLE)
     window = LightTableWindow(Path(options.path) if options.path else None)
