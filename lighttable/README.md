@@ -1,55 +1,56 @@
 # Lt — Light Table
 
-The 2D image viewer. The picture is the window, edge to edge; everything else — **Locations**
-(places + folder tree), **Gallery** (the contact sheet) and **Facts** — floats over it on panes of
-glass. Light Table opens in **Focus**, one full-frame picture with nothing on it but a small
-floating rail of pull-tabs; pull one and that panel comes back where you left it. The contact
-sheet shows every image in the selected folder **and all of its subfolders**, newest modified
-first. Tabs (Ctrl+T or the `+` button) hold independent panel/folder states, can be reordered, and
-can be renamed by double-clicking their label; the tab strip only appears once there is more than
-one tab.
+The 2D image viewer. Three columns, left to right — **Locations**, **Gallery**, **Viewer** — and
+that order is the app: where, then which, then this one. The contact sheet shows every image in the
+selected folder **and all of its subfolders**, newest modified first. Tabs (Ctrl+T or the `＋ Tab`
+button) hold independent column/folder states, can be reordered, and can be renamed by
+double-clicking their label; the tab strip only appears once there is more than one tab.
 
-## The panels — modular, resizable, rearrangeable
+## How it opens — on what you handed it
 
-Nothing is nailed down, and nothing permanently costs the picture any room.
+- **An image** — from the file manager, or `lighttable shot.png` — opens in **Focus**: the picture
+  edge to edge, no columns, no chrome but the menu bar. You asked to look at a picture.
+- **A folder**, or the app on its own, opens on the **folder and the gallery**. No viewer column
+  takes up a third of the window for a picture you have not picked yet.
+- **Double-click a frame** and the viewer opens beside the sheet — it does not throw the sheet away
+  for a full-bleed view you did not ask for. `Ctrl+Shift+F` is the one that goes full bleed.
 
-- **Move** a panel by dragging its header. Drop it anywhere over the picture.
-- **Dock** it by shoving it against a side of the window: it takes that whole edge. A tall panel
-  docks to a side, a wide one to the top or bottom, so a column carried to the right edge does
-  not end up glued to the top.
-- **Share an edge.** Two panels docked to the same side become a column of two, splitting it in
-  the order they were dropped. That is what makes the layout rearrangeable rather than just
-  movable.
-- **Resize** from any edge or corner, docked or floating. Docked panels keep their edge and only
-  change thickness.
-- **Roll up** a panel by double-clicking its header; **close** it with the × (or its pull-tab,
-  or its toolbar toggle). Closing the last one is the same thing as Focus.
-- The arrangement persists to `~/.config/2photon/lighttable-panels.txt` — one line per panel,
-  `name x y width height open snap collapsed`. Edit it by hand; there is no settings dialog.
-  **View → Reset Panel Layout** puts everything back.
+## The columns — sized, never rearranged
 
-## The material — glass, from your own desktop
+Every seam between two columns is a drag handle, so the proportions are yours. The order is not:
+there is nowhere to drag a column *to*, and no arrangement to reset, because a picture browser you
+can rearrange is a picture browser you have to re-learn every time you open it.
 
-The panels are real glass, not a dark box parked over a photograph: each one blurs what it is
-covering, bends it at the edge, and catches a lit rim so you can tell where the pane stops and the
-picture starts. Depth is the point — shadow under the pane, the pane, then the controls raised
-again on top of it.
+- **Resize** by dragging any seam — between the columns, and between the places and the tree inside
+  the sidebar.
+- **Open and close** a column from the buttons at the top of the sidebar, the View menu, or
+  `Ctrl+Shift+F` for Focus. The last column standing cannot be closed: closing it leaves the
+  viewer, which is Focus.
+- **The rightmost open column takes the leftovers.** Widening the window widens the picture (or the
+  sheet, with no viewer open), never the sidebar.
+- Widths persist to `~/.config/2photon/lighttable-panels.txt` — one line per column,
+  `name width open`. Edit it by hand; there is no settings dialog. **View → Reset Column Widths**
+  puts them back.
 
-The optics are not invented. KWin's glass effect (`kwin-effects-glass`, the KDE Store
-"Better Blur / liquid" fork) already holds your taste in it, so Light Table reads
-`[Effect-blurplus]` out of `~/.config/kwinrc` and uses the same numbers: corner radius, refraction
-edge size and strength, RGB fringing, rim width and specular, noise, blur. Turn the refraction up
-on the desktop and it goes up in here. Off KDE, or with the effect absent, sane defaults stand in
-and nothing else changes.
+## The buttons — all of them, at the top of the sidebar
 
-It stays cheap by only doing the expensive part once: the viewport is captured small and blurred
-once per change (not once per panel), the refraction is computed per pixel only along the edge
-band — about a tenth of a panel — and the maps behind it are cached per size, so a panel dragged
-across a photograph recomputes nothing. A repaint of a large panel is well under a millisecond.
+Search, then what is on screen, then what to do with the frames that are. They wrap as the sidebar
+is narrowed rather than clipping. Nothing floats over the picture — the one place a control should
+never be is on top of the thing you are looking at — so closing the sidebar takes the buttons with
+it, which is what Focus should mean.
 
-The window itself is still one translucent slab of the house grey, so a compositor that blurs
-behind a translucent window frosts the chrome for free. The picture is the only fully opaque thing
-on screen, because you have to be able to trust what an image looks like.
+## The material — dark, and a few points above black
+
+Every surface in the app lands within about 7% of black, so the photograph is the brightest thing
+on screen and you can trust what it looks like. Depth is four steps of **fill** — the window, the
+column, its header, the controls on it — never four borders. Two surfaces are told apart by one
+being slightly lighter than the other; the seam between two columns is a black gutter, which is a
+fill as well. Icons are the only strokes in the app. Selection is the one colour, and it is a fill
+too, not an outline: a one-pixel ring around a thumbnail disappears the moment the picture inside
+it has a light edge.
+
+The matting behind the picture is the darkest surface of all, and the window is opaque. A viewer
+that lets the wallpaper through is a viewer that lies about what the picture looks like.
 
 ## Marks — the quick collection and the flags
 
@@ -74,8 +75,9 @@ things onto while you look, flags are the keepers you mark on the way past.
 
 ## Places — favorites and drives
 
-The top half of the Locations panel is the two sets of marks, your places and the drives; the
-bottom half is the live folder tree. Drag the handle between them to trade one for the other.
+The top of the Locations column is the buttons and the search box; under them are the two sets of
+marks, your places and the drives, and under those the live folder tree. Drag the handle between
+the two lists to trade one for the other.
 
 - **Favorites** are yours: right-click any folder — in the tree or in places — and *Add to
   Favorites*. Right-click a pinned one to remove it. Pinning in one tab shows in all of them.
@@ -101,18 +103,18 @@ bottom half is the live folder tree. Drag the handle between them to trade one f
   context menu
 - **Shift-click** selects consecutive images, **Ctrl-click** toggles one; drag selections onto a
   folder in the tree to move the files; File → New Folder… (Ctrl+Shift+N)
-- **Search** sits at the top left (`Ctrl+F`). Type to narrow the sheet to matching images —
+- **Search** sits at the top of the sidebar (`Ctrl+F`). Type to narrow the sheet to matching images —
   every word has to match, in any order, anywhere in the path below the folder on screen, so
   `retro cockpit` finds the twelve pictures in `retro cockpits/`. It filters what is already
   scanned, so it never touches the disk; searching in Focus opens the Gallery, because results
   you cannot see are not results. `Esc` clears it and hands the keyboard back to the picture.
   Each tab keeps its own search. While you are typing in it the bare-letter keys step aside, so
   searching for `a car` filters instead of flagging half the shoot.
-- **Command bar** floats on the picture with Quick, Flag, Copy, Paste, Rename, Copy Path, Reveal,
-  the panel toggles and Focus, without hiding the matching keyboard shortcuts.
+- **The buttons** — Quick, Flag, Copy, Paste, Rename, Path, Reveal, ＋ Tab, the column toggles,
+  Facts and Focus — are at the top of the sidebar, each naming its keyboard shortcut in its tooltip.
 - **A** quick collection · **F** flag — both toggle, both work on the selection
-- **W** toggles the Facts panel (folder facts over image facts)
-- **0** fit · **9** fill · **1** 1:1 · **Ctrl+Shift+F** focus mode (closes every panel) ·
+- **W** toggles the Facts, at the foot of the sidebar (folder facts over image facts)
+- **0** fit · **9** fill · **1** 1:1 · **Ctrl+Shift+F** focus mode (the viewer alone) ·
   **Alt+F** fullscreen · **Esc** backs out. Zoom moved to the number row because **F** is worth
   more as the flag key, and 9-0-1 in a row is easier to find in the dark than a letter.
 - `lighttable image.png` or `lighttable folder/` opens directly (files are files)
@@ -145,10 +147,10 @@ forever. Z-stacks (multi-frame TIFF etc.) decode fully into RAM on load so slice
 instant. Format support is Qt's image plugins today; the OpenImageIO tier (EXR, DPX, RAW, PSD…)
 is the planned lazy-loaded extension.
 
-The glass costs a capture of the viewport at a quarter scale per change — coalesced, so panning a
-picture asks for it once a frame at most, not once a panel — plus about half a millisecond of
-NumPy per panel repaint for the refracting edge. Membership in the two sets of marks is held as a
-pair of sets rather than re-read per thumbnail, so scrolling a large folder never touches them.
+The chrome costs nothing to draw: it is flat fill and a stylesheet, with no per-pixel material and
+nothing sampling the picture, so the viewport scrolls its own backing store and repaints only the
+sliver that moved. Membership in the two sets of marks is held as a pair of sets rather than
+re-read per thumbnail, so scrolling a large folder never touches them.
 
 ## Default app
 
