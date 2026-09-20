@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Light Table — the 2D image viewer. Three columns, dark, and nothing in the way.
 
-Left to right: **Locations** (places, marks, drives, folder tree, with every button in
-the app at the top of it), **Gallery** (the recursive contact sheet) and the **Viewer**.
-That order is the app: where, then which, then this one. Drag the seam between two
-columns to change the proportions; there is nowhere to drag a column *to*, because a
-picture browser with a rearrangeable layout is a picture browser you have to re-learn
-every time you open it.
+Left to right: **Locations** (one line to search on, places, marks, drives, the folder
+tree, and the facts at the foot), **Gallery** (the recursive contact sheet) and the
+**Viewer**. That order is the app: where, then which, then this one. Drag the seam
+between two columns to change the proportions; there is nowhere to drag a column *to*,
+because a picture browser with a rearrangeable layout is a picture browser you have to
+re-learn every time you open it.
+
+There are no buttons. There was a bar of twelve of them across the top of the sidebar and
+it was the part of the app nobody touched twice: every one of them is a key you already
+press or a line in a menu you already have, and all of them together cost a strip of the
+one column with work to do. What is left is the search line. Verbs are the keys below,
+the menu bar, and the right-click menu on a frame.
 
 Open an image and it opens in **Focus** — the picture edge to edge, nothing else. Open a
 folder (or the app on its own) and it opens on the folder and the gallery, with no viewer
@@ -16,8 +22,11 @@ Marks: **A** puts the selection in the Quick Collection or takes it out again, *
 or unflags it. Both sets have a row in the sidebar and open in the sheet like a folder,
 and both are one flat text file each — marking a picture never touches the picture.
 
-Controls: LMB pan · RMB drag zoom (horizontal RMB scrubs z-stacks) · scroll zoom (slices
-on stacks) · horizontal wheel scrolls sideways · arrows / Space / Shift+Space next-prev ·
+Controls: **← and →** are the previous and the next picture from anywhere in the window,
+including with the keyboard in the folder tree — the one thing this app is for cannot
+depend on having clicked the right pane first. LMB pan · RMB drag zoom (horizontal RMB
+scrubs z-stacks) · scroll zoom (slices on stacks) · horizontal wheel scrolls sideways ·
+Space / Shift+Space next-prev ·
 Ctrl+F searches the folder · MX forward button pans, back button holds a compare with the
 last-viewed image · 0 fit · 9 fill · 1 = 1:1 · Ctrl+Shift+F focus · Alt+F fullscreen.
 
@@ -27,8 +36,11 @@ viewport to import them into the current folder; drop onto the tree to move them
 copies the selection, Ctrl+V pastes an image or files in, F2 renames, Delete trashes. A
 right-click (no drag) opens the standard context menu, including Reveal in File Manager.
 
-Every surface is a fill a few points above black; nothing is separated by a line, and the
-picture is the only bright thing on screen.
+The material is PC-6's: a black ground, white monospaced small capitals, and a hairline
+wherever two things have to be told apart. No slabs, no radii, no shadows. The facts are
+a readout — a three-letter key at the left, the value hard right, a rule under the row —
+and the picture is the only bright thing on screen and the only thing in colour, except
+for the one orange hairline that means *this one is selected*.
 """
 
 from __future__ import annotations
@@ -52,6 +64,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QGraphicsPixmapItem,
     QGraphicsScene, QGraphicsView, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
+    QStyle, QStyleOptionViewItem,
     QPushButton, QSizePolicy, QSplitter, QStyledItemDelegate, QTabWidget, QToolButton,
     QTreeView, QVBoxLayout, QWidget,
 )
@@ -65,83 +78,89 @@ from apps.lighttable.core import (
     toggle_collection, trash_command, tree_anchor, unique_destination,
 )
 from apps.lighttable.panels import (
-    ACTIVE, BASE, CONTROL, GUTTER, HOVER, LABEL, MATTE, MUTED, RAISED,
-    STYLE as PANEL_STYLE, VOID, FlowRow, Panel, PanelState, column_sizes,
-    load_layout, save_layout,
+    EDGE, GUTTER, LABEL, MATTE, MONO, MUTED, PAD, RULE,
+    STYLE as PANEL_STYLE, VOID, ColumnHead, Panel, PanelState, Readout,
+    column_sizes, load_layout, mono_font, save_layout,
 )
 
 # --- The material -----------------------------------------------------------------------
-# Dark mode, and near-black: every surface in the app sits within about 7% of black, so
-# the photograph is always the brightest thing on screen and you can trust what it looks
-# like. The steps of the ladder live in panels.py — VOID under MATTE under BASE under
-# RAISED under CONTROL — and they are the only greys used anywhere.
+# Black, white, and a hairline. The app is one unbroken black ground; the photograph is
+# the only bright thing on it and the only thing in colour. Where two surfaces have to be
+# told apart there is a 1px rule and nothing else — no slab a shade lighter, no border
+# box, no rounded corner, no shadow. This is the material PC-6 is made of, and the reason
+# is the same in both: a readout should look like it is etched into the panel, not like a
+# card lying on one.
 #
-# Fills, not strokes. Two surfaces are told apart by one being a few points lighter than
-# the other, never by a line between them; the seam between two columns is a black gutter,
-# which is a fill as well. Icons are the exception, because a stroked glyph is a glyph.
-# Selection is the one colour in the app, and it is a fill too, not an outline.
-CHROME = QColor(BASE)     # the window itself (painted, not styled)
+# Every letter of chrome is monospaced small capitals so keys and values line up in a
+# column. Orange is selection and only ever selection, and here it is a hairline too.
+CHROME = QColor(VOID)     # the window itself (painted, not styled)
 CANVAS = QColor(MATTE)    # the matting around the picture (painted, not styled)
 
 MATERIAL_STYLE = f"""
-QMainWindow, QWidget#shell {{ background: {VOID}; }}
+* {{ font-family: {MONO}; }}
+QMainWindow, QWidget#shell, QWidget#tab {{ background: {VOID}; }}
 QMainWindow::separator {{ background: {VOID}; width: 0; height: 0; }}
-QMenuBar {{ background: {BASE}; color: {MUTED}; padding: 1px 4px; }}
-QMenuBar::item {{ background: transparent; padding: 4px 9px; border-radius: 4px; }}
-QMenuBar::item:selected {{ background: {HOVER}; color: {INK}; }}
-QMenu {{ background: {RAISED}; border: 0; padding: 4px; color: {INK}; }}
-QMenu::item {{ padding: 5px 22px 5px 12px; border-radius: 4px; }}
-QMenu::item:selected {{ background: {HOVER}; }}
-QMenu::separator {{ background: {CONTROL}; height: 1px; margin: 4px 6px; }}
+
+QMenuBar {{ background: {VOID}; color: {MUTED}; padding: 0 {PAD - 4}px;
+            border-bottom: 1px solid {RULE}; font-size: 9px; }}
+QMenuBar::item {{ background: transparent; padding: 5px 9px; }}
+QMenuBar::item:selected {{ color: {INK}; }}
+QMenu {{ background: {VOID}; border: 1px solid {RULE}; padding: 3px 0; color: {INK};
+         font-size: 10px; }}
+QMenu::item {{ padding: 5px 20px 5px 12px; }}
+QMenu::item:selected {{ background: {RULE}; }}
+QMenu::item:disabled {{ color: {MUTED}; }}
+QMenu::separator {{ background: {RULE}; height: 1px; margin: 3px 0; }}
 
 QTabWidget::pane {{ border: 0; background: {VOID}; }}
-QTabBar {{ background: {BASE}; }}
-QTabBar::tab {{ background: {BASE}; color: {MUTED}; border: 0; padding: 5px 13px;
-                font-size: 10px; letter-spacing: 1px; }}
-QTabBar::tab:selected {{ color: {INK}; background: {CONTROL}; }}
-QTabWidget QPushButton {{ background: {CONTROL}; border: 0; border-radius: 4px;
-                          color: {MUTED}; font-size: 13px; padding: 0; }}
-QTabWidget QPushButton:hover {{ background: {HOVER}; color: {INK}; }}
+QTabBar {{ background: {VOID}; }}
+QTabBar::tab {{ background: {VOID}; color: {MUTED}; border: 0;
+                border-bottom: 1px solid {VOID}; padding: 5px 12px;
+                font-size: 9px; letter-spacing: 1px; }}
+QTabBar::tab:selected {{ color: {INK}; border-bottom: 1px solid {INK}; }}
 
-/* The three columns and everything living in one. No panel draws an edge: the column is
-   BASE, its title strip and button bar are RAISED, the controls on that bar are CONTROL. */
-QWidget#tab {{ background: {VOID}; }}
+/* The three columns. Each is the same black; the rule under a column head and the
+   hairline splitter between two of them are the whole of the structure. */
 QListWidget#places, QTreeView#folders, QListWidget#sheet, QWidget#panelBody {{
-    background: {BASE}; border: 0; color: {INK}; }}
+    background: {VOID}; border: 0; color: {INK}; font-size: 10px;
+    outline: 0; show-decoration-selected: 0; }}
 QListWidget#places::item, QTreeView#folders::item {{ padding: 3px 2px; border: 0; }}
 QListWidget#places::item:selected, QTreeView#folders::item:selected {{
-    background: {ACTIVE}; color: {INK}; }}
-QListWidget#places::item:hover, QTreeView#folders::item:hover {{ background: {HOVER}; }}
-QLabel#muted {{ background: transparent; color: {MUTED}; font-size: 10px; }}
+    background: transparent; color: {SELECT}; }}
+QListWidget#places::item:hover, QTreeView#folders::item:hover {{ color: {INK}; }}
+QListWidget#sheet::item:selected {{ background: transparent; }}
+QTreeView#folders {{ color: {MUTED}; }}
+QLabel#muted {{ background: transparent; color: {MUTED}; font-size: 9px; }}
 QGraphicsView#canvas {{ background: {MATTE}; border: 0; }}
 QSplitter {{ background: {VOID}; }}
 
-/* Buttons: a filled slab that lifts under the pointer and stays lifted while it is on.
-   Text only, so there is no icon set to keep consistent and nothing to mis-read. */
-QToolButton#bar {{ background: {CONTROL}; border: 0; border-radius: 4px;
-                   padding: 5px 9px; color: {MUTED}; font-size: 10px;
-                   font-weight: 700; letter-spacing: 1px; }}
-QToolButton#bar:hover {{ background: {HOVER}; color: {INK}; }}
-QToolButton#bar:pressed {{ background: {ACTIVE}; }}
-QToolButton#bar:checked {{ background: {ACTIVE}; color: {INK}; }}
-QLineEdit#search {{ background: {CONTROL}; border: 0; border-radius: 4px;
-                    padding: 5px 8px; color: {INK}; font-size: 10px;
-                    selection-background-color: {SELECT}; }}
-QLineEdit#search:focus {{ background: {HOVER}; }}
+/* The one control left in the app. A line to type on, with a rule under it — the same
+   rule as every other row, so the field reads as part of the readout, not as a box. */
+QLineEdit#search {{ background: {VOID}; border: 0; border-bottom: 1px solid {RULE};
+                    padding: 5px {PAD}px; color: {INK}; font-size: 10px;
+                    letter-spacing: 0.5px; selection-background-color: {SELECT};
+                    selection-color: {VOID}; }}
+QLineEdit#search:focus {{ border-bottom: 1px solid {SELECT}; }}
 
-QScrollBar:vertical {{ background: transparent; width: 8px; margin: 0; }}
-QScrollBar:horizontal {{ background: transparent; height: 8px; margin: 0; }}
-QScrollBar::handle {{ background: {ACTIVE}; border-radius: 4px; }}
-QScrollBar::handle:hover {{ background: #3a3a3a; }}
-QScrollBar::handle:vertical {{ min-height: 30px; }}
-QScrollBar::handle:horizontal {{ min-width: 30px; }}
+QScrollBar:vertical {{ background: {VOID}; width: 6px; margin: 0; }}
+QScrollBar:horizontal {{ background: {VOID}; height: 6px; margin: 0; }}
+QScrollBar::handle {{ background: {RULE}; }}
+QScrollBar::handle:hover {{ background: {EDGE}; }}
+QScrollBar::handle:vertical {{ min-height: 24px; }}
+QScrollBar::handle:horizontal {{ min-width: 24px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
-QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: {VOID}; }}
 
-QLabel#toast {{ background: {RAISED}; border: 0; border-radius: 4px;
-                padding: 7px 14px; color: {INK};
-                font-size: 10px; font-weight: 700; letter-spacing: 1px; }}
-QToolTip {{ color: {INK}; background: {RAISED}; border: 0; padding: 4px 7px; }}
+QLabel#toast {{ background: {VOID}; border: 1px solid {RULE}; padding: 6px 12px;
+                color: {INK}; font-size: 9px; letter-spacing: 1.5px; }}
+QToolTip {{ color: {INK}; background: {VOID}; border: 1px solid {RULE}; padding: 3px 6px;
+            font-size: 9px; }}
+QInputDialog, QMessageBox {{ background: {VOID}; color: {INK}; }}
+QInputDialog QLineEdit {{ background: {VOID}; border: 1px solid {RULE}; padding: 4px;
+                          color: {INK}; }}
+QPushButton {{ background: {VOID}; border: 1px solid {RULE}; padding: 4px 12px;
+               color: {INK}; font-size: 9px; letter-spacing: 1px; }}
+QPushButton:hover {{ border-color: {INK}; }}
 """ + PANEL_STYLE
 
 
@@ -203,7 +222,22 @@ class MarkDelegate(QStyledItemDelegate):
     SIZE = 15
 
     def paint(self, painter, option, index) -> None:
-        super().paint(painter, option, index)
+        # Qt would fill the whole cell with the selection colour. A block of orange the
+        # size of a photograph is not a mark on a photograph, it is a replacement for
+        # one — so the fill is taken away here and the selection is drawn as a hairline
+        # box around the frame instead, the same weight as every other rule in the app.
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        plain = QStyleOptionViewItem(option)
+        if selected:
+            plain.state &= ~QStyle.StateFlag.State_Selected
+        super().paint(painter, plain, index)
+        if selected:
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(SELECT), 1))
+            painter.drawRect(option.rect.adjusted(0, 0, -1, -1))
+            painter.restore()
         marks = index.data(MARKS_ROLE) or ()
         if not marks:
             return
@@ -513,14 +547,13 @@ class ContactSheet(QListWidget):
         self.thumb = 128
         self._apply_size()
         self.setItemDelegate(MarkDelegate(self))
-        # Selection is a fill, not an outline: a one-pixel ring around a thumbnail is lost
-        # the moment the picture inside it has a light edge, and it is the only thing on
-        # the sheet you have to be able to count at a glance. The padding is what turns
-        # the fill into a visible band around the frame.
+        # Selection is a ring, not a block. A filled orange cell the size of a
+        # photograph replaces the photograph; the ring is drawn by the delegate on the
+        # cell's own padding, which is black, so it never lands on the picture and never
+        # gets lost against a light edge.
         self.setStyleSheet(
-            f"QListWidget::item{{color:{MUTED}; border:0; padding:3px; border-radius:3px;}}"
-            f"QListWidget::item:hover{{background:{HOVER};}}"
-            f"QListWidget::item:selected{{background:{SELECT}; color:{INK};}}")
+            f"QListWidget::item{{color:{MUTED}; border:0; padding:3px;}}"
+            f"QListWidget::item:selected{{background:transparent; color:{INK};}}")
         self._rmb_last = None          # local pos of the last right-button event
         self._rmb_press = None         # global pos of the right-button press
         self._rmb_moved = False        # did the right button drag (resize) or just click?
@@ -684,13 +717,13 @@ class Places(QListWidget):
         super().__init__()
         self.setObjectName("places")
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        # The selected place is a filled row, not a row with a marker stuck to its edge:
-        # the sidebar is a list of one-line answers and the fill is what makes the current
-        # one scan as an answer rather than as a decorated line of text.
+        # The selected place is the one written in orange. Nothing in this app is told
+        # apart by a filled rectangle any more, and the sidebar is the place that proves
+        # it: a list of one-line answers, one of which is lit.
         self.setStyleSheet(
-            f"QListWidget::item{{padding:5px 9px; border:0;}}"
-            f"QListWidget::item:hover{{background:{HOVER};}}"
-            f"QListWidget::item:selected{{background:{ACTIVE}; color:{INK};}}"
+            f"QListWidget::item{{padding:4px 9px; border:0;}}"
+            f"QListWidget::item:hover{{color:{INK};}}"
+            f"QListWidget::item:selected{{background:transparent; color:{SELECT};}}"
         )
         self.itemActivated.connect(self._activate)
         self.itemClicked.connect(self._activate)
@@ -846,6 +879,7 @@ class Tab(QWidget):
     panes_changed = pyqtSignal()
     favorites_changed = pyqtSignal()
     marks_changed = pyqtSignal()
+    search_typed = pyqtSignal(str)
 
     def __init__(self, start_dir: Path, layout_states: dict[str, PanelState] | None = None):
         super().__init__()
@@ -892,14 +926,20 @@ class Tab(QWidget):
         self.view.image_data_dropped.connect(self.save_and_view_image)
         self.view.context_requested.connect(self.show_context_menu)
 
+        # Search: one line at the top of the sidebar, under the column head. It belongs
+        # to the tab and not to the window because the question is per folder — two tabs
+        # are two folders and two different things being looked for in them.
+        self.search = QLineEdit()
+        self.search.setObjectName("search")
+        self.search.setPlaceholderText("SEARCH")
+        self.search.setFont(mono_font(10, spacing=0.5))
+        self.search.textChanged.connect(self._typed)
+
         # Facts: folder above image, at the foot of the sidebar where the rest of the
-        # answers about "where am I" already are. W shows and hides it.
-        self.folder_info = QLabel(objectName="muted")
-        self.folder_info.setWordWrap(True)
-        self.folder_info.setContentsMargins(10, 6, 10, 8)
-        self.image_info = QLabel(objectName="muted")
-        self.image_info.setWordWrap(True)
-        self.image_info.setContentsMargins(10, 6, 10, 8)
+        # answers about "where am I" already are. W shows and hides it. Both are readouts
+        # now — key left, value right, a rule per row — and not two paragraphs of grey.
+        self.folder_info = Readout()
+        self.image_info = Readout()
         self.facts = self._facts_panel()
         self.facts.setVisible(False)
 
@@ -930,16 +970,8 @@ class Tab(QWidget):
         self.splitter.setObjectName("columns")
         self.splitter.setHandleWidth(GUTTER)
         self.splitter.setChildrenCollapsible(False)
-        # The window's one button bar is lent to whichever tab is in front; this is the
-        # slot it drops into, directly under the sidebar's title.
-        self.bar_slot = QWidget()
-        self.bar_slot.setObjectName("buttonBar")
-        slot = QVBoxLayout(self.bar_slot)
-        slot.setContentsMargins(0, 0, 0, 0)
-        slot.setSpacing(0)
-
         self.panels: dict[str, Panel] = {}
-        for name, content, header in (("locations", sidebar, self.bar_slot),
+        for name, content, header in (("locations", sidebar, self.search),
                                       ("gallery", self.sheet, None),
                                       ("viewer", self.view, None)):
             panel = Panel(name, PANEL_TITLES[name], content, header, self)
@@ -970,15 +1002,25 @@ class Tab(QWidget):
         self.set_folder(start_dir)
 
     def _facts_panel(self) -> QWidget:
-        """Folder facts over image facts, at the foot of the sidebar. W toggles it."""
+        """Folder facts over image facts, at the foot of the sidebar. W toggles it.
+
+        Two readouts stacked, each row a key and a value over a hairline — the same
+        instrument the hardware monitor uses, because the question is the same one: what
+        is in front of me right now, in as few characters as it can be said in."""
         box = QWidget()
         box.setObjectName("panelBody")
         facts = QVBoxLayout(box)
-        facts.setContentsMargins(0, 2, 0, 4)
+        facts.setContentsMargins(0, 0, 0, 0)
         facts.setSpacing(0)
         facts.addWidget(self.folder_info, 0)
         facts.addWidget(self.image_info, 0)
         return box
+
+    def _typed(self, text: str) -> None:
+        """The search line, live. Filter this tab, then say so — the window decides
+        whether a result nobody can see is worth opening the gallery for."""
+        self.set_filter(text)
+        self.search_typed.emit(text)
 
     # -- the columns -------------------------------------------------------------
     def relayout(self) -> None:
@@ -1030,11 +1072,6 @@ class Tab(QWidget):
             if name in states:
                 panel.state = states[name]
         self.relayout()
-
-    def take_buttons(self, bar: QWidget) -> None:
-        """Take the window's button bar into this tab's sidebar."""
-        self.bar_slot.layout().addWidget(bar)
-        bar.setVisible(True)
 
     def flash(self, message: str) -> None:
         """Say what just happened, over the picture, briefly.
@@ -1184,22 +1221,33 @@ class Tab(QWidget):
             self.sheet.setCurrentRow(0)
         heading = (collection_title(self.collection) if self.collection is not None
                    else str(self.folder))
-        self.folder_info.setText(f"{heading}\n{self._count_line()}")
+        self.folder_info.setText("\n".join([f"dir\t{heading}", *self._count_rows()]))
+        head = self.panels["gallery"].title
+        if head is not None:
+            head.set_value(f"{len(self.paths)}/{len(self.all_paths)}"
+                           if self.filter_text else f"{len(self.all_paths)}")
 
-    def _count_line(self) -> str:
+    def _count_rows(self) -> list[str]:
+        """What is on the sheet, one fact per row.
+
+        A count and the name of the newest frame are two different answers, and a row
+        that carries both is a row where one of them gets elided away — so they are two
+        rows, keyed like everything else in the readout."""
         shown = len(self.paths)
         images = "image" if shown == 1 else "images"
         if self.filter_text:
-            return (f"{shown} of {len(self.all_paths)} images "
-                    f"matching “{self.filter_text}”")
+            return [f"img\t{shown} of {len(self.all_paths)} {images}",
+                    f"qry\t{self.filter_text}"]
         if self.collection is not None:
             # A set keeps the order you built it in — the only order in the app that is
             # yours rather than the disk's — so "newest first" would be a lie here.
             missing = len(load_collection(self.collection)) - len(self.all_paths)
-            gone = f" · {missing} not on this machine" if missing > 0 else ""
-            return f"{shown} {images}, in the order you marked them{gone}"
-        newest = Path(self.paths[0]).name if self.paths else "—"
-        return f"{shown} {images} (recursive) · newest: {newest}"
+            rows = [f"img\t{shown} {images}, in the order you marked them"]
+            if missing > 0:
+                rows.append(f"off\t{missing} not on this machine")
+            return rows
+        return [f"img\t{shown} {images} (recursive)",
+                f"new\t{Path(self.paths[0]).name if self.paths else '—'}"]
 
     def _thumb_ready(self, row: int, path: str, thumb_file: str) -> None:
         if row < self.sheet.count() and self.paths[row] == path:
@@ -1233,8 +1281,9 @@ class Tab(QWidget):
         stack = f" · {len(frames)} slices" if len(frames) > 1 else ""
         marks = " · ".join(collection_title(name) for name, members in self.marks.items()
                            if path in members)
-        self.image_info.setText(f"{Path(path).name}\n{dims}{stack} · {size_kb:,.0f} KB"
-                                + (f"\n{marks}" if marks else ""))
+        self.image_info.setText(f"sel\t{Path(path).name}\ndim\t{dims}{stack}"
+                                f"\nsiz\t{size_kb:,.0f} KB"
+                                + (f"\nmrk\t{marks}" if marks else ""))
 
     def set_details_visible(self, on: bool) -> None:
         """W: the facts, at the foot of the sidebar. Not a column of its own — three
@@ -1507,28 +1556,6 @@ class Tab(QWidget):
         return target
 
 
-class ButtonBar(QWidget):
-    """Every button in the app, at the top of the sidebar.
-
-    They used to float over the picture on a pane of glass, which put the controls in the
-    one place nothing should ever be: on top of the thing you are looking at. Here they
-    are out of the picture's way entirely, they wrap as the sidebar is narrowed, and
-    closing the sidebar takes them with it — which is exactly what Focus should mean."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName("buttonBar")
-        self.rows = QVBoxLayout(self)
-        self.rows.setContentsMargins(6, 4, 6, 6)
-        self.rows.setSpacing(4)
-
-    def add_row(self) -> FlowRow:
-        row = FlowRow(spacing=3)
-        row.setContentsMargins(0, 0, 0, 0)
-        self.rows.addLayout(row)
-        return row
-
-
 class Shell(QWidget):
     """The whole window under the menu bar: the tabs, filling it. Nothing floats any
     more, so this is a plain box with one thing in it."""
@@ -1561,8 +1588,6 @@ class LightTableWindow(QMainWindow):
         self.tabs.tabCloseRequested.connect(self._close_tab)
         self.tabs.tabBarDoubleClicked.connect(self._rename_tab)
         self.tabs.currentChanged.connect(self._sync_pane_actions)
-        self.tabs.currentChanged.connect(self._sync_search)
-        self.tabs.currentChanged.connect(self._move_bar)
         # No corner widget: a floating ＋ in the top right is a button that is not at the
         # top of the sidebar with the others, and it sits over the Gallery's own header.
         # New tabs are Ctrl+T, the File menu, and the ＋ Tab button on the bar.
@@ -1574,7 +1599,6 @@ class LightTableWindow(QMainWindow):
         self.shell.box.addWidget(self.tabs, 1)
         self.setCentralWidget(self.shell)
         self._build_menus()
-        self._build_buttons()
         self._build_keys()
 
         # How the app opens is a question about what you handed it. A picture is a thing
@@ -1609,25 +1633,14 @@ class LightTableWindow(QMainWindow):
         tab.panes_changed.connect(self._sync_pane_actions)
         tab.favorites_changed.connect(self._reload_places)
         tab.marks_changed.connect(self._marks_changed)
+        tab.search_typed.connect(self._search_changed)
+        tab.search.installEventFilter(self)  # bare keys step aside while typing
         self.tabs.addTab(tab, tab.folder.name or str(tab.folder))
         self.tabs.setCurrentWidget(tab)
         tab.set_focus_mode(self.focus_mode)
         tab.set_details_visible(self.details_on)
         self.tabs.tabBar().setVisible(self.tabs.count() > 1)
-        self._move_bar()
         self._sync_pane_actions()
-
-    def _move_bar(self, *args) -> None:
-        """There is one button bar, and it lives in whichever tab is in front.
-
-        Not one per tab: the buttons act on the window, and three copies of them would be
-        three things to keep in sync for no gain. The tab just lends the bar its slot at
-        the top of the sidebar."""
-        if not hasattr(self, "buttons"):
-            return
-        tab = self.current_tab()
-        if tab is not None:
-            tab.take_buttons(self.buttons)
 
     def _marks_changed(self) -> None:
         """One set of marks, every tab: the files underneath are the same two, so a flag
@@ -1723,81 +1736,27 @@ class LightTableWindow(QMainWindow):
         act(view_menu, "Fit", "0", lambda: self.current_tab().view.fit())
         act(view_menu, "Fill", "9", lambda: self.current_tab().view.fill())
         act(view_menu, "1:1", "1", lambda: self.current_tab().view.one_to_one())
-        act(view_menu, "Facts", "W", self.toggle_details)
         view_menu.addSeparator()
-        # The columns are here as well as on the bar, because the bar lives in one of them
-        # and Focus closes it: without this there would be a state you could get into and
-        # not out of except by keyboard.
+        # Everything below used to be a row of buttons at the top of the sidebar. They
+        # were pressed about as often as a menu item is, and they cost a strip of the one
+        # column that has real work to do, so they are menu items — checkable ones, which
+        # is the part the buttons were actually carrying: a statement of what is open.
+        self.pane_actions: dict[str, QAction] = {}
         for pane, label in (("locations", "Locations"), ("gallery", "Gallery"),
                             ("viewer", "Viewer")):
-            act(view_menu, label, "", lambda _checked=False, name=pane:
-                self._set_current_pane(name, not self.current_tab().pane_visible(name)))
-        act(view_menu, "Focus Mode", "Ctrl+Shift+F", self.toggle_focus)
+            action = act(view_menu, label, "", lambda checked=False, name=pane:
+                         self._set_current_pane(name, checked))
+            action.setCheckable(True)
+            self.pane_actions[pane] = action
+        self.facts_action = act(view_menu, "Facts", "W",
+                                lambda _checked=False: self.toggle_details())
+        self.facts_action.setCheckable(True)
+        self.focus_action = act(view_menu, "Focus Mode", "Ctrl+Shift+F",
+                                lambda _checked=False: self.toggle_focus())
+        self.focus_action.setCheckable(True)
         act(view_menu, "Fullscreen", "Alt+F", self.toggle_fullscreen)
         view_menu.addSeparator()
         act(view_menu, "Reset Column Widths", "", self.reset_layout)
-
-    def _build_buttons(self) -> None:
-        """Every button in the app, at the top of the sidebar, in three rows.
-
-        Search first, because narrowing the folder is the thing you do most and a field
-        you have to hunt for is a field you stop using. Then what is on screen, then what
-        to do with the frames that are. They are grouped by question, not by menu."""
-        self.buttons = ButtonBar()
-
-        def button(row, text: str, tooltip: str, fn, checkable: bool = False) -> QToolButton:
-            widget = QToolButton()
-            widget.setObjectName("bar")
-            widget.setText(text)
-            widget.setToolTip(tooltip)
-            widget.setCheckable(checkable)
-            widget.setCursor(Qt.CursorShape.PointingHandCursor)
-            widget.clicked.connect(fn)
-            row.addWidget(widget)
-            return widget
-
-        # Row one: type to narrow the folder you are looking at.
-        self.search = QLineEdit()
-        self.search.setObjectName("search")
-        self.search.setPlaceholderText("Search this folder…")
-        self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self._search_changed)
-        self.search.installEventFilter(self)  # bare-letter keys step aside while typing
-        self.buttons.rows.addWidget(self.search)
-
-        # Row two: what is on screen. Every column, plus the two states worth one key.
-        panes = self.buttons.add_row()
-        self.pane_actions: dict[str, QToolButton] = {}
-        for pane, label in (("locations", "Places"), ("gallery", "Gallery"),
-                            ("viewer", "Viewer")):
-            widget = button(panes, label, f"Show or hide the {label.lower()} column",
-                            lambda checked, name=pane: self._set_current_pane(name, checked),
-                            checkable=True)
-            self.pane_actions[pane] = widget
-        self.facts_action = button(panes, "Facts", "Folder and image facts (W)",
-                                   lambda checked: self.toggle_details(), checkable=True)
-        self.focus_action = button(panes, "Focus", "The picture, edge to edge (Ctrl+Shift+F)",
-                                   self._set_focus, checkable=True)
-
-        # Row three: what to do with the frames. Marks first — they are the ones you reach
-        # for while the pictures are going past.
-        verbs = self.buttons.add_row()
-        button(verbs, "Quick", "Add the selection to the Quick Collection, or take it out (A)",
-               lambda: self.current_tab().toggle_mark("quick"))
-        button(verbs, "Flag", "Flag the selection, or unflag it (F)",
-               lambda: self.current_tab().toggle_mark("flagged"))
-        button(verbs, "Copy", "Copy selected files (Ctrl+C)",
-               lambda: self.current_tab().copy_selection())
-        button(verbs, "Paste", "Paste files or image (Ctrl+V)",
-               lambda: self.current_tab().paste_clipboard())
-        button(verbs, "Rename", "Rename selected file (F2)", lambda: self.current_tab().rename())
-        button(verbs, "Path", "Copy full file paths (Ctrl+Shift+C)",
-               lambda: self.current_tab().copy_paths())
-        button(verbs, "Reveal", "Reveal selected file in the file manager (Ctrl+R)",
-               lambda: self.current_tab().reveal())
-        button(verbs, "＋ Tab", "New tab (Ctrl+T)",
-               lambda: self.new_tab(self.current_tab().folder))
-        self._move_bar()
 
     def eventFilter(self, watched, event) -> bool:
         """Hand the bare-letter keys to the search box while it has the keyboard, and
@@ -1807,36 +1766,41 @@ class LightTableWindow(QMainWindow):
             typing = event.type() == QEvent.Type.FocusIn
             for action in self.letter_actions:
                 action.setEnabled(not typing)
+            for shortcut in getattr(self, "arrow_keys", ()):
+                shortcut.setEnabled(not typing)
         return super().eventFilter(watched, event)
 
-    def _search_changed(self, text: str) -> None:
-        """Searching is per tab — each tab is its own folder and its own question."""
-        tab = self.current_tab()
-        if tab is None:
-            return
-        tab.set_filter(text)
-        # Results you cannot see are not results: a search opens the Gallery if the
-        # window is in Focus. Clearing the box leaves it open — you asked for it once.
-        if text.strip() and not tab.pane_visible("gallery"):
-            self._set_current_pane("gallery", True)
-            self._sync_pane_actions()
+    @property
+    def search(self):
+        """The search line of whichever tab is in front.
 
-    def _sync_search(self, *args) -> None:
-        """Show the incoming tab's own search, without re-filtering it on the way in."""
+        There is one per tab, because the question is per folder: two tabs are two
+        folders and two different things being looked for in them. Nothing is synced on
+        the way in — each field already holds its own tab's answer."""
         tab = self.current_tab()
-        if tab is None or not hasattr(self, "search"):
+        return tab.search if tab is not None else None
+
+    def _search_changed(self, text: str) -> None:
+        """Results you cannot see are not results: a search opens the Gallery if the
+        window is in Focus. Clearing the box leaves it open — you asked for it once."""
+        tab = self.current_tab()
+        if tab is None or not text.strip() or tab.pane_visible("gallery"):
             return
-        self.search.blockSignals(True)
-        self.search.setText(tab.filter_text)
-        self.search.blockSignals(False)
+        self._set_current_pane("gallery", True)
+        self._sync_pane_actions()
 
     def focus_search(self) -> None:
-        self.search.setFocus(Qt.FocusReason.ShortcutFocusReason)
-        self.search.selectAll()
+        field = self.search
+        if field is None:
+            return
+        field.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        field.selectAll()
 
     def clear_search(self) -> None:
         """Escape out of a search: drop the filter, hand the keyboard back to the picture."""
-        self.search.clear()
+        field = self.search
+        if field is not None:
+            field.clear()
         tab = self.current_tab()
         if tab is not None:
             tab.view.setFocus(Qt.FocusReason.ShortcutFocusReason)
@@ -1900,6 +1864,22 @@ class LightTableWindow(QMainWindow):
 
     def _build_keys(self) -> None:
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self._escape)
+        # Left and right are the previous and the next picture, and they are that no
+        # matter which column the keyboard is in. Going through a shoot is the thing this
+        # app is for, and it cannot depend on having clicked the right pane first: the
+        # folder tree gives up its expand/collapse keys, which it can spare, because a
+        # disclosure triangle is one click away and the next frame is not.
+        self.arrow_keys = [
+            QShortcut(QKeySequence(key), self,
+                      activated=lambda step=step: self._step(step))
+            for key, step in (("Left", -1), ("Right", 1),
+                              ("Space", 1), ("Shift+Space", -1))
+        ]
+
+    def _step(self, direction: int) -> None:
+        tab = self.current_tab()
+        if tab is not None:
+            tab.step(direction)
 
     def toggle_details(self) -> None:
         self.details_on = not self.details_on
@@ -1916,7 +1896,8 @@ class LightTableWindow(QMainWindow):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
     def _escape(self) -> None:
-        if self.search.hasFocus() or self.search.text():
+        field = self.search
+        if field is not None and (field.hasFocus() or field.text()):
             self.clear_search()
         elif self.isFullScreen():
             self.showNormal()

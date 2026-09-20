@@ -1,10 +1,16 @@
-"""The columns, and the flat dark material they are made of.
+"""The columns, and the flat black material they are made of.
 
 Light Table was three floating panes of refracting glass for a while. It looked like a
 demo and worked like one: you could put the contact sheet anywhere, which mostly meant
 you could put it somewhere wrong, and a photograph seen through a tinted pane is a
 photograph you cannot trust. So it is three columns again — **Locations**, **Gallery**,
-**Viewer**, always in that order, left to right — and the material is flat fill.
+**Viewer**, always in that order, left to right.
+
+The material is the one the hardware monitor is made of: a black ground, white ink, and
+a hairline where two things have to be told apart. Nothing is a slab, nothing is raised,
+nothing has a radius. A label is small capitals with a rule under it; a value is hard
+right on the same line. Read PC-6's readout and this one and you should not have to ask
+whether they came from the same shop.
 
 Two rules hold the whole thing up:
 
@@ -12,10 +18,10 @@ Two rules hold the whole thing up:
   layout is yours to proportion; the order is not yours to change, because there is only
   one order that reads left-to-right as narrowing down — where, then which, then this
   one. Columns open and close, and the widths persist.
-- **Fills, not strokes.** Nothing here is separated by a line. Surfaces are told apart by
-  sitting a few points above black — `BASE` under `RAISED` under `CONTROL` — and columns
-  are separated by a black gutter, which is a fill too. Only icons get strokes. The
-  picture is the one bright thing on screen, and nothing draws a bright edge next to it.
+- **Rules, not fills.** Every surface in the app is the same black. Two of them are told
+  apart by a hairline between them and by nothing else, which is why there is no grey
+  ladder here any more: a photograph on black next to a panel on black is a photograph
+  with nothing borrowed from it.
 """
 
 from __future__ import annotations
@@ -24,31 +30,47 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
-from PyQt6.QtWidgets import QLabel, QLayout, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtCore import QRect, QSize, Qt
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter
+from PyQt6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from apps.lighttable.core import config_dir
 
-# --- The ladder -----------------------------------------------------------------------
-# Dark mode, and near-black at that: every surface in the app lands within about 7% of
-# black, so the brightest thing on screen is always the photograph. Depth is four steps of
-# fill, not four borders — each one is a few points up from the one it sits on, which is
-# enough to read as a separate surface and not enough to read as a box.
-VOID = "#000000"       # the gutter between columns, and behind everything
-MATTE = "#070707"      # the matting the picture is laid on
-BASE = "#0e0e0e"       # a column's body
-RAISED = "#151515"     # headers and the button bar: one step nearer the eye
-CONTROL = "#1c1c1c"    # a button or a field at rest
-HOVER = "#262626"      # under the pointer
-ACTIVE = "#303030"     # pressed, or a toggle that is on
+# --- The material ---------------------------------------------------------------------
+# One ground, one ink, one rule. The picture is the only bright thing on screen and the
+# only thing with a colour in it; everything around it is black with white writing on it.
+VOID = "#000000"       # the ground: the window, every column, the gutter between them
+MATTE = "#000000"      # the matting the picture is laid on — the same black, on purpose
+RULE = "#242424"       # the hairline, and the only way two surfaces are ever told apart
+EDGE = "#3c3c3c"       # a hairline you are pointing at (a splitter handle under the mouse)
 
 INK = "#f2f2f2"        # text
-MUTED = "#7a7a7a"      # secondary text, and a toggle that is off
-LABEL = "#5e5e5e"      # column headers
+MUTED = "#6e6e6e"      # secondary text: values you are not reading right now
+LABEL = "#9a9a9a"      # small-capital keys — the left column of a readout, a column head
 
-HEADER = 24            # height of a column's title strip
-GUTTER = 2             # the black seam between two columns — also the grab handle
+# Every letter of chrome in the app is monospaced small capitals, which is what makes a
+# readout a readout: keys line up, values line up, and a path does not reflow when a digit
+# changes. File names are chrome too here — they are data you scan, not prose you read.
+MONO = "'JetBrains Mono', 'JetBrains Mono NL', 'DejaVu Sans Mono', monospace"
+MONO_FAMILIES = ("JetBrains Mono", "JetBrains Mono NL", "DejaVu Sans Mono", "Monospace")
+
+HEADER = 19            # height of a column's label strip, rule included
+ROW = 15               # height of one readout row, rule included
+GUTTER = 1             # the hairline seam between two columns — also the grab handle
+PAD = 8                # the one horizontal inset, used by every strip in the app
 MINIMUM = QSize(150, 120)
+
+
+def mono_font(size: int = 9, bold: bool = False, spacing: float = 0.8) -> QFont:
+    """The chrome face. Small, monospaced, letterspaced a hair so capitals can breathe."""
+    font = QFont()
+    font.setFamilies(list(MONO_FAMILIES))
+    font.setStyleHint(QFont.StyleHint.Monospace)
+    font.setPixelSize(size)
+    font.setBold(bold)
+    if spacing:
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+    return font
 
 
 @dataclass(frozen=True)
@@ -135,79 +157,122 @@ def column_sizes(states: Iterable[PanelState], total: int) -> list[int]:
     return sizes
 
 
-class FlowRow(QLayout):
-    """A row of buttons that wraps instead of clipping.
+class ColumnHead(QWidget):
+    """A column's name, and one fact about it, over a hairline.
 
-    The buttons live at the top of the sidebar, and the sidebar is a column the user is
-    free to make narrow. Qt's box layouts would either squash the buttons past legibility
-    or push them off the edge, so this one lays them out left to right and starts a new
-    line when the next one will not fit. It is the plainest possible flow layout: no
-    stretch, no alignment, one spacing."""
+    Key hard left, value hard right, a rule underneath — the same three moves as a row of
+    the readout below it, because a column head *is* a row of a readout: the one that
+    happens to name the column."""
 
-    def __init__(self, parent: QWidget | None = None, spacing: int = 4):
+    def __init__(self, title: str, parent: QWidget | None = None):
         super().__init__(parent)
-        self._items: list = []
-        self.setSpacing(spacing)
+        self.setObjectName("columnHead")
+        self._title = title.upper()
+        self._value = ""
+        self.setFixedHeight(HEADER)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def addItem(self, item) -> None:  # noqa: N802 - Qt API
-        self._items.append(item)
+    def set_value(self, value: str) -> None:
+        """The one fact: how many frames are on the sheet, which folder you are in."""
+        value = value.upper()
+        if value != self._value:
+            self._value = value
+            self.update()
 
-    def count(self) -> int:
-        return len(self._items)
+    def value(self) -> str:
+        return self._value
 
-    def itemAt(self, index: int):  # noqa: N802 - Qt API
-        return self._items[index] if 0 <= index < len(self._items) else None
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(VOID))
+        painter.setFont(mono_font(9, bold=True, spacing=1.4))
+        painter.setPen(QColor(LABEL))
+        box = self.rect().adjusted(PAD, 0, -PAD, -1)
+        painter.drawText(box, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+                         self._title)
+        if self._value:
+            painter.setFont(mono_font(9, spacing=0.6))
+            painter.setPen(QColor(MUTED))
+            metrics = QFontMetrics(painter.font())
+            room = max(0, box.width() - metrics.horizontalAdvance(self._title) - 3 * PAD)
+            painter.drawText(
+                box, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight),
+                metrics.elidedText(self._value, Qt.TextElideMode.ElideLeft, room))
+        painter.fillRect(0, self.height() - 1, self.width(), 1, QColor(RULE))
 
-    def takeAt(self, index: int):  # noqa: N802 - Qt API
-        return self._items.pop(index) if 0 <= index < len(self._items) else None
 
-    def expandingDirections(self):  # noqa: N802 - Qt API
-        return Qt.Orientation(0)
+class Readout(QWidget):
+    """The facts, as the hardware monitor would draw them.
 
-    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt API
-        return True
+    One row per fact: a three-letter key at the left, the value hard right, a hairline
+    under the row. Text goes in as lines of `KEY\\tVALUE` — a line with no tab in it is a
+    value with no key, and an empty string is no readout at all. A long path is elided
+    from the left, because the end of it is the part that tells it apart; anything else
+    loses its middle, because the start of it is the answer."""
 
-    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt API
-        return self._lay_out(QRect(0, 0, width, 0), apply=False)
+    KEY_WIDTH = 30
 
-    def setGeometry(self, rect) -> None:  # noqa: N802 - Qt API
-        super().setGeometry(rect)
-        self._lay_out(rect, apply=True)
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("readout")
+        self._text = ""
+        self._rows: list[tuple[str, str]] = []
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt API
-        return self.minimumSize()
+    def setText(self, text: str) -> None:  # noqa: N802 - matches QLabel, which this replaces
+        self._text = text or ""
+        self._rows = []
+        for line in self._text.splitlines():
+            if not line.strip():
+                continue
+            key, tab, value = line.partition("\t")
+            self._rows.append((key.upper(), value) if tab else ("", key))
+        self.updateGeometry()
+        self.update()
 
-    def minimumSize(self) -> QSize:  # noqa: N802 - Qt API
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        margins = self.contentsMargins()
-        return size + QSize(margins.left() + margins.right(),
-                            margins.top() + margins.bottom())
+    def text(self) -> str:
+        return self._text
 
-    def _lay_out(self, rect: QRect, apply: bool) -> int:
-        """Place every item, and return the height the row ended up needing."""
-        margins = self.contentsMargins()
-        area = rect.adjusted(margins.left(), margins.top(),
-                             -margins.right(), -margins.bottom())
-        x, y, line = area.x(), area.y(), 0
-        for item in self._items:
-            hint = item.sizeHint()
-            if line and x + hint.width() > area.right() + 1:
-                x, y, line = area.x(), y + line + self.spacing(), 0
-            if apply:
-                item.setGeometry(QRect(QPoint(x, y), hint))
-            x += hint.width() + self.spacing()
-            line = max(line, hint.height())
-        return y + line - rect.y() + margins.bottom()
+    def rows(self) -> list[tuple[str, str]]:
+        return list(self._rows)
+
+    def sizeHint(self) -> QSize:
+        return QSize(MINIMUM.width(), ROW * len(self._rows))
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(VOID))
+        key_font = mono_font(9, bold=True, spacing=1.0)
+        value_font = mono_font(9, spacing=0.4)
+        metrics = QFontMetrics(value_font)
+        width = self.width()
+        for index, (key, value) in enumerate(self._rows):
+            top = index * ROW
+            line = QRect(PAD, top, max(0, width - 2 * PAD), ROW - 1)
+            if key:
+                painter.setFont(key_font)
+                painter.setPen(QColor(LABEL))
+                painter.drawText(line, int(Qt.AlignmentFlag.AlignVCenter
+                                           | Qt.AlignmentFlag.AlignLeft), key)
+                line = line.adjusted(self.KEY_WIDTH, 0, 0, 0)
+            painter.setFont(value_font)
+            painter.setPen(QColor(INK if key else MUTED))
+            mode = (Qt.TextElideMode.ElideLeft if "/" in value
+                    else Qt.TextElideMode.ElideMiddle)
+            painter.drawText(
+                line, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight),
+                metrics.elidedText(value, mode, line.width()))
+            painter.fillRect(0, top, width, 1, QColor(RULE))
 
 
 class Panel(QWidget):
-    """One column: a title strip, then its content, on a flat near-black fill.
+    """One column: a label strip, then its content, on black.
 
     The strip is not a handle — there is nothing to drag a column to. It is a label, so
-    you can tell at a glance which of the two narrow columns you are looking at, and it
-    doubles as the surface the sidebar's buttons sit on."""
+    you can tell at a glance which of the two narrow columns you are looking at."""
 
     def __init__(self, name: str, title: str | None, content: QWidget,
                  header: QWidget | None = None, parent: QWidget | None = None):
@@ -221,12 +286,7 @@ class Panel(QWidget):
         # A column with no title is a column that does not need one: the viewer is a
         # photograph, and a strip of grey capitals over a photograph is a label on a
         # window telling you it is a window. It also means Focus is genuinely full bleed.
-        self.title = None
-        if title is not None:
-            self.title = QLabel(title.upper(), self)
-            self.title.setObjectName("panelTitle")
-            self.title.setFixedHeight(HEADER)
-            self.title.setContentsMargins(10, 0, 10, 0)
+        self.title = ColumnHead(title, self) if title is not None else None
 
         box = QVBoxLayout(self)
         box.setContentsMargins(0, 0, 0, 0)
@@ -244,10 +304,11 @@ class Panel(QWidget):
         return self._name
 
 
+# Qt draws the widgets; this is only here to say "black, no border, no radius" once for
+# each kind of thing, because a stylesheet default that is a grey slab shows through
+# anywhere a rule was not drawn by hand.
 STYLE = f"""
-QWidget#panel {{ background: {BASE}; }}
-QLabel#panelTitle {{ background: {RAISED}; color: {LABEL}; font-size: 9px;
-                     font-weight: 700; letter-spacing: 2px; }}
-QWidget#buttonBar {{ background: {RAISED}; }}
-QSplitter::handle {{ background: {VOID}; }}
+QWidget#panel, QWidget#columnHead, QWidget#readout {{ background: {VOID}; }}
+QSplitter::handle {{ background: {RULE}; }}
+QSplitter::handle:hover, QSplitter::handle:pressed {{ background: {EDGE}; }}
 """

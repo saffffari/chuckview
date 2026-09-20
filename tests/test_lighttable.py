@@ -380,8 +380,14 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 QThreadPool.globalInstance().waitForDone(5000)
                 window.close()
 
-    def test_every_button_is_at_the_top_of_the_sidebar(self) -> None:
-        """The bar is in the Locations column, and it is the same bar in every tab."""
+    def test_the_search_line_is_the_only_control_in_the_window(self) -> None:
+        """Every button the app used to carry is a menu item now.
+
+        The bar of twelve was the thing you stopped seeing after a week and kept paying a
+        strip of the sidebar for. What is left is one line to type in, in the column it
+        filters, and it belongs to its tab — two tabs are two questions."""
+        from PyQt6.QtWidgets import QAbstractButton
+
         from apps.lighttable.app import LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
@@ -391,17 +397,23 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 window = LightTableWindow(Path(tmp))
                 tab = window.current_tab()
 
-                # The bar and the search box live inside the sidebar, not over the picture.
-                sidebar = tab.panels["locations"]
-                self.assertIs(sidebar, self.ancestor(window.buttons, sidebar))
-                self.assertIs(sidebar, self.ancestor(window.search, sidebar))
+                # Not one pressable thing anywhere in a tab.
+                self.assertEqual([], [button.text()
+                                      for button in tab.findChildren(QAbstractButton)])
+                self.assertFalse(hasattr(window, "buttons"))
 
-                # There is one bar; opening a second tab moves it, it does not clone it.
+                # The search line is in the column it narrows.
+                sidebar = tab.panels["locations"]
+                self.assertIs(sidebar, self.ancestor(tab.search, sidebar))
+                self.assertIs(tab.search, window.search)
+
+                # One per tab, and the window always forwards to the one in front.
                 window.new_tab(Path(tmp))
                 second = window.current_tab()
-                self.assertIsNot(second, tab)
-                self.assertIs(second.panels["locations"],
-                              self.ancestor(window.buttons, second.panels["locations"]))
+                self.assertIsNot(second.search, tab.search)
+                self.assertIs(second.search, window.search)
+                tab.search.setText("only in the first tab")
+                self.assertEqual("", second.search.text())
                 from PyQt6.QtCore import QThreadPool as Pool
                 Pool.globalInstance().waitForDone(5000)
                 window.close()
@@ -421,17 +433,17 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 self.assertFalse(window.pane_actions["viewer"].isChecked())
                 self.assertFalse(window.focus_action.isChecked())
 
-                window.pane_actions["viewer"].click()
+                window.pane_actions["viewer"].trigger()
                 self.assertTrue(tab.pane_visible("viewer"))
 
                 # Closing the last two leaves the picture, which is Focus.
-                window.pane_actions["gallery"].click()
-                window.pane_actions["locations"].click()
+                window.pane_actions["gallery"].trigger()
+                window.pane_actions["locations"].trigger()
                 self.assertTrue(window.focus_action.isChecked())
                 self.assertTrue(tab.pane_visible("viewer"))
 
                 # And the last column standing cannot be closed into an empty window.
-                window.pane_actions["viewer"].click()
+                window.pane_actions["viewer"].trigger()
                 self.assertTrue(tab.pane_visible("viewer"))
                 from PyQt6.QtCore import QThreadPool as Pool
                 Pool.globalInstance().waitForDone(5000)
@@ -767,23 +779,20 @@ class ColumnLayoutTests(unittest.TestCase):
             loaded = panels.load_layout(DEFAULT_PANELS, Path(tmp) / "never-written.txt")
             self.assertEqual({state.name: state for state in DEFAULT_PANELS}, loaded)
 
-    def test_a_narrow_sidebar_wraps_its_buttons_instead_of_clipping_them(self) -> None:
-        """The buttons live in a column the user can make narrow, so the row has to wrap.
-
-        Measured through the layout's own height-for-width, which is what Qt asks: the
-        same set of buttons is taller when there is less room for it."""
-        from PyQt6.QtWidgets import QApplication, QToolButton
+    def test_a_readout_row_is_a_key_and_a_value(self) -> None:
+        """The facts are an instrument panel, not a paragraph: every line is a
+        three-letter key and a value, and a line with no tab in it is a value alone."""
+        from PyQt6.QtWidgets import QApplication
 
         app = QApplication.instance() or QApplication([])
-        holder = QWidget()
-        row = panels.FlowRow(holder, spacing=4)
-        for text in ("Quick", "Flag", "Copy", "Paste", "Rename", "Path", "Reveal"):
-            button = QToolButton(holder)
-            button.setText(text)
-            row.addWidget(button)
-        wide, narrow = row.heightForWidth(2000), row.heightForWidth(150)
-        self.assertGreater(narrow, wide)
-        self.assertEqual(7, row.count())
+        readout = panels.Readout()
+        readout.setText("dir\t/home/alex/Pictures\nimg\t12 images\nloose value")
+        self.assertEqual([("DIR", "/home/alex/Pictures"), ("IMG", "12 images"),
+                          ("", "loose value")], readout.rows())
+        self.assertIn("12 images", readout.text())
+        self.assertEqual(3 * panels.ROW, readout.sizeHint().height())
+        readout.setText("")
+        self.assertEqual([], readout.rows())
         del app
 
 
@@ -989,7 +998,7 @@ class ColumnSmokeTests(unittest.TestCase):
             self.assertEqual(list(COLUMNS), on_screen)
 
             # Opening the third column does not reshuffle the first two.
-            window.pane_actions["viewer"].click()
+            window.pane_actions["viewer"].trigger()
             self.app.processEvents()
             self.assertEqual(list(COLUMNS),
                              [tab.splitter.widget(i).name
@@ -1005,7 +1014,7 @@ class ColumnSmokeTests(unittest.TestCase):
 
         with self.window() as (window, tmp):
             tab = window.current_tab()
-            window.pane_actions["viewer"].click()
+            window.pane_actions["viewer"].trigger()
             self.app.processEvents()
 
             # Drag the seams: a splitter is the only thing that decides widths, so this
@@ -1092,6 +1101,48 @@ class ColumnSmokeTests(unittest.TestCase):
             self.app.processEvents()
             self.assertEqual({"locations", "gallery"},
                              {name for name in COLUMNS if tab.pane_visible(name)})
+
+    def test_the_arrow_keys_step_between_images_from_any_column(self) -> None:
+        """Left and right are the previous and the next picture, wherever the keyboard is.
+
+        The case that matters is the one this used to get wrong: you click a folder in the
+        tree, so the tree has the keyboard, and then you want to go through what is in it
+        without having to click a thumbnail first to hand the keys to the right widget."""
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QImage
+        from PyQt6.QtTest import QTest
+
+        with contextlib.ExitStack() as stack:
+            shoot = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            image = QImage(8, 8, QImage.Format.Format_RGB32)
+            image.fill(0xFF202020)
+            for name in ("a.png", "b.png", "c.png"):
+                image.save(str(shoot / name))
+            window, _tmp = stack.enter_context(self.window(shoot))
+            tab = window.current_tab()
+            self.assertEqual(3, tab.sheet.count())
+            tab.sheet.setCurrentRow(0)
+
+            # The keyboard is in the folder tree, which is where it lands after you pick
+            # a folder — and the arrows still belong to the pictures.
+            tab.tree.setFocus()
+            self.app.processEvents()
+            QTest.keyClick(window, Qt.Key.Key_Right)
+            self.assertEqual(1, tab.sheet.currentRow())
+            QTest.keyClick(window, Qt.Key.Key_Right)
+            QTest.keyClick(window, Qt.Key.Key_Left)
+            self.assertEqual(1, tab.sheet.currentRow())
+
+            # Neither end runs off: the first frame is the first frame.
+            tab.sheet.setCurrentRow(0)
+            QTest.keyClick(window, Qt.Key.Key_Left)
+            self.assertEqual(0, tab.sheet.currentRow())
+
+            # And they step aside the moment you are typing a file name to search for.
+            tab.search.setFocus()
+            self.app.processEvents()
+            QTest.keyClick(tab.search, Qt.Key.Key_Right)
+            self.assertEqual(0, tab.sheet.currentRow())
 
     def test_the_facts_live_at_the_foot_of_the_sidebar(self) -> None:
         """W is a section of the sidebar, not a fourth column: three columns is the app."""

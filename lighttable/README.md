@@ -2,9 +2,9 @@
 
 The 2D image viewer. Three columns, left to right — **Locations**, **Gallery**, **Viewer** — and
 that order is the app: where, then which, then this one. The contact sheet shows every image in the
-selected folder **and all of its subfolders**, newest modified first. Tabs (Ctrl+T or the `＋ Tab`
-button) hold independent column/folder states, can be reordered, and can be renamed by
-double-clicking their label; the tab strip only appears once there is more than one tab.
+selected folder **and all of its subfolders**, newest modified first. Tabs (Ctrl+T) hold
+independent column/folder states, can be reordered, and can be renamed by double-clicking their
+label; the tab strip only appears once there is more than one tab.
 
 ## How it opens — on what you handed it
 
@@ -23,34 +23,43 @@ can rearrange is a picture browser you have to re-learn every time you open it.
 
 - **Resize** by dragging any seam — between the columns, and between the places and the tree inside
   the sidebar.
-- **Open and close** a column from the buttons at the top of the sidebar, the View menu, or
-  `Ctrl+Shift+F` for Focus. The last column standing cannot be closed: closing it leaves the
-  viewer, which is Focus.
+- **Open and close** a column from the View menu, or `Ctrl+Shift+F` for Focus. The last column
+  standing cannot be closed: closing it leaves the viewer, which is Focus.
 - **The rightmost open column takes the leftovers.** Widening the window widens the picture (or the
   sheet, with no viewer open), never the sidebar.
 - Widths persist to `~/.config/2photon/lighttable-panels.txt` — one line per column,
   `name width open`. Edit it by hand; there is no settings dialog. **View → Reset Column Widths**
   puts them back.
 
-## The buttons — all of them, at the top of the sidebar
+## There are no buttons
 
-Search, then what is on screen, then what to do with the frames that are. They wrap as the sidebar
-is narrowed rather than clipping. Nothing floats over the picture — the one place a control should
-never be is on top of the thing you are looking at — so closing the sidebar takes the buttons with
-it, which is what Focus should mean.
+There was a bar of twelve across the top of the sidebar — Quick, Flag, Copy, Paste, Rename, Path,
+Reveal, ＋ Tab, three column toggles, Facts, Focus — and it was the part of the app nobody touched
+twice. Every one of them was a key you already press or a line in a menu you already have, and
+together they cost a strip of the one column that has real work to do.
 
-## The material — dark, and a few points above black
+What is left in the whole window is **one line to type a search on**. The verbs are the keys, the
+menu bar, and the right-click menu on a frame; what is open is the View menu, where the four
+switches are checkmarks — which is the only thing the buttons were really carrying.
 
-Every surface in the app lands within about 7% of black, so the photograph is the brightest thing
-on screen and you can trust what it looks like. Depth is four steps of **fill** — the window, the
-column, its header, the controls on it — never four borders. Two surfaces are told apart by one
-being slightly lighter than the other; the seam between two columns is a black gutter, which is a
-fill as well. Icons are the only strokes in the app. Selection is the one colour, and it is a fill
-too, not an outline: a one-pixel ring around a thumbnail disappears the moment the picture inside
-it has a light edge.
+## The material — black, white, and a hairline
 
-The matting behind the picture is the darkest surface of all, and the window is opaque. A viewer
-that lets the wallpaper through is a viewer that lies about what the picture looks like.
+Light Table is made of what [PC-6](../../../PC-6) is made of, for the same reason: a readout should
+look etched into the panel, not like a card lying on one.
+
+- **One ground.** Every surface in the app is the same black, the matting included. The photograph
+  is the brightest thing on screen and the only thing in colour, so you can trust what it looks
+  like.
+- **A hairline, or nothing.** Where two things have to be told apart there is a 1px rule. No slab a
+  shade lighter, no border box, no rounded corner, no shadow, no gradient.
+- **Monospaced small capitals** for every letter of chrome, so keys line up in a column and a path
+  does not reflow when a digit in it changes.
+- **The facts are a readout**: a three-letter key hard left, the value hard right, a rule under the
+  row — `DIR` `IMG` `NEW` `SEL` `DIM` `SIZ` `MRK`. A column head is the same three moves, which is
+  why the Gallery's head carries the frame count on its right.
+- **Selection is the one colour** and it is a hairline too: an orange ring on the thumbnail's own
+  black padding, never on the picture, and orange text in the sidebar. Nothing else in the app is
+  ever orange.
 
 ## Marks — the quick collection and the flags
 
@@ -75,9 +84,9 @@ things onto while you look, flags are the keepers you mark on the way past.
 
 ## Places — favorites and drives
 
-The top of the Locations column is the buttons and the search box; under them are the two sets of
-marks, your places and the drives, and under those the live folder tree. Drag the handle between
-the two lists to trade one for the other.
+The top of the Locations column is the search line; under it are the two sets of marks, your
+places and the drives, and under those the live folder tree. Drag the handle between the two lists
+to trade one for the other.
 
 - **Favorites** are yours: right-click any folder — in the tree or in places — and *Add to
   Favorites*. Right-click a pinned one to remove it. Pinning in one tab shows in all of them.
@@ -97,7 +106,11 @@ the two lists to trade one for the other.
   (on z-stacks, horizontal RMB drag scrubs slices)
 - **Scroll** zoom at cursor on flat images; steps slices on z-stacks
 - **Horizontal wheel** scrolls the picture sideways — it does not change image
-- **← → / Space / Shift+Space** previous–next image
+- **← →** previous–next image, from anywhere in the window. They are the pictures' keys even when
+  the keyboard is in the folder tree or the sidebar — going through a shoot cannot depend on having
+  clicked the right pane first — and they step aside while you are typing in the search line. The
+  tree gives up expand/collapse to them, which it can spare: a disclosure triangle is one click
+  away and the next frame is not. **Space / Shift+Space** do the same thing.
 - **MX Master**: forward button pans; back button holds a compare with the last-viewed image
 - **RMB drag on the contact sheet** resizes thumbnails; a plain **RMB click** (no drag) opens the
   context menu
@@ -110,8 +123,6 @@ the two lists to trade one for the other.
   you cannot see are not results. `Esc` clears it and hands the keyboard back to the picture.
   Each tab keeps its own search. While you are typing in it the bare-letter keys step aside, so
   searching for `a car` filters instead of flagging half the shoot.
-- **The buttons** — Quick, Flag, Copy, Paste, Rename, Path, Reveal, ＋ Tab, the column toggles,
-  Facts and Focus — are at the top of the sidebar, each naming its keyboard shortcut in its tooltip.
 - **A** quick collection · **F** flag — both toggle, both work on the selection
 - **W** toggles the Facts, at the foot of the sidebar (folder facts over image facts)
 - **0** fit · **9** fill · **1** 1:1 · **Ctrl+Shift+F** focus mode (the viewer alone) ·
