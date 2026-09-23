@@ -12,10 +12,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np  # noqa: E402
 from PyQt6.QtCore import QEvent, QPoint, QRect, QThreadPool  # noqa: E402
-from PyQt6.QtWidgets import QMenu  # noqa: E402
+from PyQt6.QtWidgets import QMenu, QWidget  # noqa: E402
 
-from apps.lighttable import glass, panels  # noqa: E402
-from apps.lighttable.app import DEFAULT_PANELS  # noqa: E402
+from apps.lighttable import panels  # noqa: E402
+from apps.lighttable.app import COLUMNS, DEFAULT_PANELS  # noqa: E402
 from apps.lighttable.panels import PanelState  # noqa: E402
 from apps.lighttable.core import (  # noqa: E402
     IMAGE_EXTS,
@@ -332,13 +332,16 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 created = tab.new_folder("picks")
                 self.assertTrue(created is not None and created.is_dir())
                 self.assertIsNone(tab.new_folder("picks"))
-                # Light Table opens directly in Focus: locations and gallery hidden.
-                self.assertFalse(tab.location_column.isVisibleTo(tab))
-                self.assertFalse(tab.gallery_column.isVisibleTo(tab))
-                self.assertTrue(tab.pane_visible("viewer"))
-                window.toggle_focus()
+                # A folder opens on the folder and the gallery, with no viewer column
+                # eating a third of the window for a picture nobody has picked yet.
                 self.assertTrue(tab.pane_visible("locations"))
                 self.assertTrue(tab.pane_visible("gallery"))
+                self.assertFalse(tab.pane_visible("viewer"))
+                self.assertFalse(window.focus_mode)
+                window.toggle_focus()
+                self.assertTrue(tab.pane_visible("viewer"))
+                self.assertFalse(tab.pane_visible("locations"))
+                self.assertFalse(tab.pane_visible("gallery"))
                 window.toggle_focus()
 
                 # Import an external image (drag/drop or paste-of-files path).
@@ -377,7 +380,14 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 QThreadPool.globalInstance().waitForDone(5000)
                 window.close()
 
-    def test_disclosure_rail_opens_each_column(self) -> None:
+    def test_the_search_line_is_the_only_control_in_the_window(self) -> None:
+        """Every button the app used to carry is a menu item now.
+
+        The bar of twelve was the thing you stopped seeing after a week and kept paying a
+        strip of the sidebar for. What is left is one line to type in, in the column it
+        filters, and it belongs to its tab — two tabs are two questions."""
+        from PyQt6.QtWidgets import QAbstractButton
+
         from apps.lighttable.app import LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
@@ -386,20 +396,68 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                                               "TWOPHOTON_CONFIG_HOME": config}):
                 window = LightTableWindow(Path(tmp))
                 tab = window.current_tab()
-                # Focus: both columns closed, both disclosure tabs unchecked.
-                self.assertFalse(any(b.isChecked() for b in tab.rail.buttons.values()))
-                tab.rail.buttons["gallery"].click()
-                self.assertTrue(tab.pane_visible("gallery"))
-                self.assertFalse(tab.pane_visible("locations"))
-                # Opening a column drops Focus; the toolbar toggle follows along.
-                self.assertTrue(window.pane_actions["gallery"].isChecked())
-                self.assertFalse(window.focus_action.isChecked())
-                tab.rail.buttons["gallery"].click()
-                self.assertFalse(tab.pane_visible("gallery"))
-                self.assertTrue(window.focus_action.isChecked())
+
+                # Not one pressable thing anywhere in a tab.
+                self.assertEqual([], [button.text()
+                                      for button in tab.findChildren(QAbstractButton)])
+                self.assertFalse(hasattr(window, "buttons"))
+
+                # The search line is in the column it narrows.
+                sidebar = tab.panels["locations"]
+                self.assertIs(sidebar, self.ancestor(tab.search, sidebar))
+                self.assertIs(tab.search, window.search)
+
+                # One per tab, and the window always forwards to the one in front.
+                window.new_tab(Path(tmp))
+                second = window.current_tab()
+                self.assertIsNot(second.search, tab.search)
+                self.assertIs(second.search, window.search)
+                tab.search.setText("only in the first tab")
+                self.assertEqual("", second.search.text())
                 from PyQt6.QtCore import QThreadPool as Pool
                 Pool.globalInstance().waitForDone(5000)
                 window.close()
+
+    def test_the_pane_buttons_open_and_close_each_column(self) -> None:
+        from apps.lighttable.app import LightTableWindow
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
+                tempfile.TemporaryDirectory() as config:
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
+                                              "TWOPHOTON_CONFIG_HOME": config}):
+                window = LightTableWindow(Path(tmp))
+                tab = window.current_tab()
+                # A folder opens on two columns, and the buttons say so.
+                self.assertTrue(window.pane_actions["locations"].isChecked())
+                self.assertTrue(window.pane_actions["gallery"].isChecked())
+                self.assertFalse(window.pane_actions["viewer"].isChecked())
+                self.assertFalse(window.focus_action.isChecked())
+
+                window.pane_actions["viewer"].trigger()
+                self.assertTrue(tab.pane_visible("viewer"))
+
+                # Closing the last two leaves the picture, which is Focus.
+                window.pane_actions["gallery"].trigger()
+                window.pane_actions["locations"].trigger()
+                self.assertTrue(window.focus_action.isChecked())
+                self.assertTrue(tab.pane_visible("viewer"))
+
+                # And the last column standing cannot be closed into an empty window.
+                window.pane_actions["viewer"].trigger()
+                self.assertTrue(tab.pane_visible("viewer"))
+                from PyQt6.QtCore import QThreadPool as Pool
+                Pool.globalInstance().waitForDone(5000)
+                window.close()
+
+    @staticmethod
+    def ancestor(widget, target):
+        """The first of `widget`'s parents that is `target`, or None."""
+        node = widget
+        while node is not None:
+            if node is target:
+                return node
+            node = node.parentWidget()
+        return None
 
     def test_places_lists_favorites_then_drives_and_pins(self) -> None:
         from apps.lighttable.app import FAVORITE_ROLE, PATH_ROLE, LightTableWindow
@@ -452,7 +510,8 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 window = LightTableWindow(Path(tmp))
                 tab = window.current_tab()
                 self.assertEqual(3, tab.sheet.count())
-                self.assertFalse(tab.pane_visible("gallery"))  # opens in Focus
+                window.toggle_focus()
+                self.assertFalse(tab.pane_visible("gallery"))
 
                 window.search.setText("car")
                 self.assertEqual(2, tab.sheet.count())
@@ -653,161 +712,88 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual([Path("/tmp/b.png"), Path("/tmp/a.png")], load_collection("quick"))
 
 
-class GlassTests(unittest.TestCase):
-    """The material: read off the desktop, and computed only where glass bends light."""
+class ColumnLayoutTests(unittest.TestCase):
+    """How wide the columns are, and the one line of text each takes on disk."""
 
-    def test_settings_come_from_the_desktops_own_effect(self) -> None:
-        text = ("[Effect-other]\nRefractionStrength=99\n\n"
-                "[Effect-blurplus]\nTopCornerRadius=20\nRefractionEdgeSize=8\n"
-                "RimGlow=false\nNoiseStrength=nonsense\n\n[Effect-later]\nRimGlow=true\n")
-        values = glass.read_group(text, glass.KWIN_GROUP)
-        self.assertEqual({"TopCornerRadius": "20", "RefractionEdgeSize": "8",
-                          "RimGlow": "false", "NoiseStrength": "nonsense"}, values)
-        settings = glass.settings_from_group(values)
-        self.assertEqual(20.0, settings.top_radius)
-        self.assertEqual(8.0, settings.edge)
-        self.assertFalse(settings.rim_glow)
-        # A value that will not parse keeps the default rather than taking the glass down.
-        self.assertEqual(glass.DEFAULTS.noise, settings.noise)
-        self.assertEqual(glass.DEFAULTS.strength, settings.strength)
+    def test_the_rightmost_open_column_takes_the_leftovers(self) -> None:
+        """Sidebars keep the width you gave them; the picture gets the rest of the window.
 
-    def test_no_kwin_no_problem(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(glass.DEFAULTS,
-                             glass.read_glass_settings(Path(tmp) / "not-here"))
+        This is the whole sizing rule. Without it a splitter shares new space out in
+        proportion, and every time you widened the window you would be widening the
+        folder tree."""
+        states = [PanelState("locations", 260, True), PanelState("gallery", 520, True),
+                  PanelState("viewer", 760, True)]
+        self.assertEqual([260, 520, 620], panels.column_sizes(states, 1400))
 
-    def test_the_distance_field_knows_inside_from_edge(self) -> None:
-        sdf = glass.rounded_box_sdf(60, 40, 10)
-        self.assertLess(sdf[20, 30], -10)          # the middle is deep inside
-        # The left-hand pixel centre sits half a pixel inside the edge.
-        self.assertAlmostEqual(sdf[20, 0], -0.5, places=4)
-        self.assertGreater(sdf[0, 0], 0)           # the corner is outside the round
-        self.assertEqual((40, 60), sdf.shape)
+        # With the viewer closed, the gallery is the one that absorbs.
+        states[2] = PanelState("viewer", 760, False)
+        sizes = panels.column_sizes(states, 1400)
+        self.assertEqual(260, sizes[0])
+        self.assertEqual(1140, sizes[1])
 
-    def test_the_glass_is_only_computed_where_it_bends(self) -> None:
-        maps = glass.Maps(200, 160, glass.DEFAULTS)
-        self.assertLess(maps.band.size, 200 * 160 * 0.35)   # a band, not the whole pane
-        rows, columns = np.divmod(maps.band, 200)
-        self.assertEqual(0, rows.min())                      # and it reaches every edge
-        self.assertEqual(159, rows.max())
-        self.assertEqual(0, columns.min())
-        self.assertEqual(199, columns.max())
-        middle = 80 * 200 + 100
-        self.assertNotIn(middle, set(maps.band.tolist()))
+        # A window too narrow to honour everything still gives every column something
+        # you can get hold of, rather than a zero-width column you can never drag back.
+        for size in panels.column_sizes(states, 200):
+            self.assertGreaterEqual(size, panels.MINIMUM.width())
 
-    def test_the_flat_middle_comes_back_transparent_and_the_edge_solid(self) -> None:
-        backdrop = np.full((160, 200, 3), 200, dtype=np.uint8)
-        out = glass.MaterialCache(glass.DEFAULTS).rim_image(backdrop, 200, 160,
-                                                            (13, 13, 13), 0.62)
-        self.assertEqual((160, 200, 4), out.shape)
-        self.assertEqual(0, out[80, 100, 3])     # middle: Qt fills that, not us
-        self.assertEqual(255, out[80, 0, 3])     # edge: ours
-        self.assertEqual(0, out[0, 0, 3])        # outside the rounded corner: nothing
-        # Tinted, so the edge is darker than the backdrop it is standing on.
-        self.assertLess(int(out[80, 1, 0]), 200)
+    def test_a_closed_column_still_has_a_width_to_come_back_to(self) -> None:
+        states = [PanelState("locations", 260, False), PanelState("gallery", 520, True),
+                  PanelState("viewer", 760, False)]
+        sizes = panels.column_sizes(states, 1400)
+        self.assertEqual(260, sizes[0])
+        self.assertEqual(760, sizes[2])
+        self.assertEqual(1400, sizes[1])
 
-    def test_refraction_disperses_the_channels(self) -> None:
-        """Physically based refraction bends red furthest and blue least, which is why
-        the three channels read from three different places."""
-        maps = glass.Maps(200, 160, glass.DEFAULTS)
-        red, green, blue = maps.samples
-        self.assertTrue((red != blue).any())
-        self.assertTrue((red != green).any())
-        flat = glass.Maps(200, 160, replace(glass.DEFAULTS, physical=False))
-        self.assertTrue((flat.samples[0] == flat.samples[2]).all())
-
-    def test_maps_are_cached_per_size(self) -> None:
-        cache = glass.MaterialCache(glass.DEFAULTS, limit=2)
-        first = cache.maps(100, 100)
-        self.assertIs(first, cache.maps(100, 100))
-        cache.maps(120, 100)
-        cache.maps(140, 100)          # over the limit: the oldest goes
-        self.assertIsNot(first, cache.maps(100, 100))
-
-
-class PanelLayoutTests(unittest.TestCase):
-    """Where the panels are: a rectangle each, and one line of text each on disk."""
-
-    AREA = QRect(0, 40, 1000, 760)
-
-    def test_docking_takes_the_whole_edge_under_the_command_bar(self) -> None:
-        left = panels.snap_geometry(PanelState("locations", width=300, snap="left"),
-                                    self.AREA)
-        self.assertEqual((0, 40, 300, 760), left.getRect())
-        right = panels.snap_geometry(PanelState("gallery", width=380, snap="right"),
-                                     self.AREA)
-        self.assertEqual((620, 40, 380, 760), right.getRect())
-        bottom = panels.snap_geometry(PanelState("info", height=150, snap="bottom"),
-                                      self.AREA)
-        self.assertEqual((0, 650, 1000, 150), bottom.getRect())
-
-    def test_a_free_panel_can_never_be_dragged_out_of_reach(self) -> None:
-        stray = PanelState("info", x=-4000, y=9000, width=300, height=200)
-        rect = panels.snap_geometry(stray, self.AREA)
-        self.assertGreaterEqual(rect.right(), self.AREA.left())
-        self.assertLessEqual(rect.top(), self.AREA.bottom())
-        self.assertGreaterEqual(rect.top(), self.AREA.top())
-
-    def test_only_a_panel_let_go_of_at_an_edge_docks(self) -> None:
-        """Where the pointer was, not where the panel was: a tall panel is near the top
-        and the bottom at once wherever you put it, so the panel cannot be the judge."""
-        self.assertEqual("left", panels.snap_for(QPoint(6, 400), self.AREA))
-        self.assertEqual("right", panels.snap_for(QPoint(995, 400), self.AREA))
-        self.assertEqual("top", panels.snap_for(QPoint(500, 46), self.AREA))
-        self.assertEqual("bottom", panels.snap_for(QPoint(500, 790), self.AREA))
-        self.assertEqual("free", panels.snap_for(QPoint(500, 400), self.AREA))
-        # A tall panel dropped in open water floats, however close its own edges are.
-        self.assertEqual("free", panels.snap_for(QPoint(360, 372), self.AREA))
-
-    def test_two_panels_on_one_edge_are_a_column_of_two(self) -> None:
-        states = [PanelState("locations", width=300, snap="left", open=True),
-                  PanelState("gallery", width=340, snap="left", open=True)]
-        rects = panels.share_edge(states, self.AREA)
-        self.assertEqual(40, rects["locations"].top())
-        self.assertEqual(rects["locations"].bottom() + 1, rects["gallery"].top())
-        self.assertEqual(self.AREA.bottom(), rects["gallery"].bottom())
-        # Each keeps its own width — sharing an edge is not sharing a size.
-        self.assertEqual(300, rects["locations"].width())
-        self.assertEqual(340, rects["gallery"].width())
-
-    def test_rolled_up_gives_the_edge_back(self) -> None:
-        """A collapsed panel is a header, not a full-height title bar — docked or not."""
-        rolled = PanelState("locations", width=300, snap="left", collapsed=True)
-        self.assertEqual(panels.HEADER,
-                         panels.snap_geometry(rolled, self.AREA).height())
-
-        states = [rolled, PanelState("gallery", width=340, snap="left", open=True)]
-        rects = panels.share_edge(states, self.AREA)
-        self.assertEqual(panels.HEADER, rects["locations"].height())
-        # The gallery gets everything the rolled-up one is not using.
-        self.assertEqual(rects["locations"].bottom() + 1, rects["gallery"].top())
-        self.assertEqual(self.AREA.bottom(), rects["gallery"].bottom())
-
-    def test_the_layout_is_one_readable_line_per_panel(self) -> None:
-        states = [PanelState("locations", 10, 20, 300, 500, True, "left", False),
-                  PanelState("gallery", 40, 50, 380, 600, False, "free", True)]
+    def test_the_layout_is_one_readable_line_per_column(self) -> None:
+        states = [PanelState("locations", 300, True), PanelState("gallery", 380, False)]
         text = panels.format_layout(states)
-        self.assertIn("locations 10 20 300 500 1 left 0", text)
-        self.assertIn("gallery 40 50 380 600 0 free 1", text)
+        self.assertIn("locations 300 1", text)
+        self.assertIn("gallery 380 0", text)
         parsed = panels.parse_layout(text, DEFAULT_PANELS)
         self.assertEqual(states[0], parsed["locations"])
         self.assertEqual(states[1], parsed["gallery"])
-        # A panel the file says nothing about keeps its default.
-        self.assertEqual("info", parsed["info"].name)
+        # A column the file says nothing about keeps its default.
+        self.assertEqual("viewer", parsed["viewer"].name)
 
     def test_a_damaged_layout_falls_back_instead_of_failing(self) -> None:
         defaults = {state.name: state for state in DEFAULT_PANELS}
-        text = ("# comment\nlocations not a number here at all\n"
-                "nonsense 1 2 3 4 1 left 0\ngallery 5 6 300 400 1 sideways 0\n")
+        text = "# comment\nlocations not-a-number 1\nnonsense 300 1\ngallery 400 1\n"
         parsed = panels.parse_layout(text, DEFAULT_PANELS)
         self.assertEqual(defaults["locations"], parsed["locations"])
         self.assertNotIn("nonsense", parsed)
-        self.assertEqual("free", parsed["gallery"].snap)  # an edge we do not have
+        self.assertEqual(400, parsed["gallery"].width)
+
+    def test_the_old_floating_layout_file_is_not_read_as_widths(self) -> None:
+        """The file this replaces held `name x y width height open snap collapsed`.
+
+        Reading its `x` as the new `width` would open the app with a 26px sidebar clamped
+        to the minimum — a layout nobody chose, restored from a file nobody edited. Eight
+        fields is not three fields, so the line is skipped and the default stands."""
+        old = ("# Light Table panels — name x y width height open snap collapsed\n"
+               "locations 26 60 300 560 1 left 0\ngallery 900 60 380 620 1 right 0\n")
+        parsed = panels.parse_layout(old, DEFAULT_PANELS)
+        self.assertEqual({state.name: state for state in DEFAULT_PANELS}, parsed)
 
     def test_a_missing_layout_file_is_a_fresh_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             loaded = panels.load_layout(DEFAULT_PANELS, Path(tmp) / "never-written.txt")
             self.assertEqual({state.name: state for state in DEFAULT_PANELS}, loaded)
+
+    def test_a_readout_row_is_a_key_and_a_value(self) -> None:
+        """The facts are an instrument panel, not a paragraph: every line is a
+        three-letter key and a value, and a line with no tab in it is a value alone."""
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        readout = panels.Readout()
+        readout.setText("dir\t/home/alex/Pictures\nimg\t12 images\nloose value")
+        self.assertEqual([("DIR", "/home/alex/Pictures"), ("IMG", "12 images"),
+                          ("", "loose value")], readout.rows())
+        self.assertIn("12 images", readout.text())
+        self.assertEqual(3 * panels.ROW, readout.sizeHint().height())
+        readout.setText("")
+        self.assertEqual([], readout.rows())
+        del app
 
 
 class MarkingSmokeTests(unittest.TestCase):
@@ -883,6 +869,7 @@ class MarkingSmokeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             window, _folder = self.build(stack)
             tab = window.current_tab()
+            window.toggle_focus()
             self.assertFalse(tab.pane_visible("gallery"))
             tab.sheet.setCurrentRow(0)
             tab.toggle_mark("flagged")
@@ -974,8 +961,8 @@ class MarkingSmokeTests(unittest.TestCase):
             QThreadPool.globalInstance().waitForDone(5000)
 
 
-class PanelSmokeTests(unittest.TestCase):
-    """Panels float, dock, resize and are still there next time."""
+class ColumnSmokeTests(unittest.TestCase):
+    """Three columns, in one order, sized but never rearranged — and still there next time."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -983,99 +970,81 @@ class PanelSmokeTests(unittest.TestCase):
 
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_panels_float_over_a_full_bleed_picture_and_can_be_moved(self) -> None:
+    @contextlib.contextmanager
+    def window(self, folder=None):
         from apps.lighttable.app import LightTableWindow
 
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
-                tempfile.TemporaryDirectory() as config:
-            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
-                                              "TWOPHOTON_CONFIG_HOME": config}):
-                window = LightTableWindow(Path(tmp))
-                window.resize(1200, 800)
-                tab = window.current_tab()
-                self.app.processEvents()
-
-                # The viewport is the window, not a third of it.
-                self.assertEqual(tab.rect(), tab.view.geometry())
-
-                window.toggle_focus()
-                locations = tab.panels["locations"]
-                self.assertTrue(locations.isVisibleTo(tab))
-                self.assertEqual(tab.panel_area().left(), locations.geometry().left())
-                self.assertEqual(tab.panel_area().height(), locations.geometry().height())
-
-                # Drag it into open water: it stops being docked and keeps the geometry.
-                locations.state = replace(locations.state, x=400, y=300, snap="free",
-                                          width=320, height=240)
-                tab.relayout()
-                self.assertEqual((400, 300, 320, 240), locations.geometry().getRect())
-
-                # Shove it back against the right edge and it docks there full height.
-                locations.state = replace(locations.state,
-                                          x=tab.width() - 320, snap="right")
-                tab.relayout()
-                gallery = tab.panels["gallery"]
-                self.assertEqual(tab.width(), locations.geometry().right() + 1)
-                # The gallery is already docked there, so the two share the edge.
-                self.assertEqual(tab.panel_area().top(), locations.geometry().top())
-                self.assertEqual(locations.geometry().bottom() + 1,
-                                 gallery.geometry().top())
-                self.assertEqual(tab.panel_area().bottom(), gallery.geometry().bottom())
-
-                # Never smaller than you can grab hold of.
-                locations.state = replace(locations.state, snap="free", width=10, height=10)
-                tab.relayout()
-                self.assertGreaterEqual(locations.width(), 120)
+        with contextlib.ExitStack() as stack:
+            tmp = stack.enter_context(tempfile.TemporaryDirectory())
+            cache = stack.enter_context(tempfile.TemporaryDirectory())
+            config = stack.enter_context(tempfile.TemporaryDirectory())
+            stack.enter_context(mock.patch.dict(os.environ, {
+                "XDG_CACHE_HOME": cache, "TWOPHOTON_CONFIG_HOME": config}))
+            window = LightTableWindow(Path(folder or tmp))
+            window.resize(1400, 900)
+            window.show()
+            self.app.processEvents()
+            try:
+                yield window, Path(tmp)
+            finally:
                 QThreadPool.globalInstance().waitForDone(5000)
                 window.close()
 
-    def test_the_arrangement_is_kept_and_can_be_put_back(self) -> None:
+    def test_the_order_is_locations_gallery_viewer_and_cannot_be_changed(self) -> None:
+        with self.window() as (window, _tmp):
+            tab = window.current_tab()
+            self.assertEqual(("locations", "gallery", "viewer"), COLUMNS)
+            on_screen = [tab.splitter.widget(i).name for i in range(tab.splitter.count())]
+            self.assertEqual(list(COLUMNS), on_screen)
+
+            # Opening the third column does not reshuffle the first two.
+            window.pane_actions["viewer"].trigger()
+            self.app.processEvents()
+            self.assertEqual(list(COLUMNS),
+                             [tab.splitter.widget(i).name
+                              for i in range(tab.splitter.count())])
+            # Left to right, each one starts where the last one ended. No overlap, and
+            # nothing floating over the picture.
+            boxes = [tab.panels[name].geometry() for name in COLUMNS]
+            self.assertLess(boxes[0].right(), boxes[1].left())
+            self.assertLess(boxes[1].right(), boxes[2].left())
+
+    def test_the_columns_can_be_sized_and_the_widths_are_kept(self) -> None:
         from apps.lighttable.app import LightTableWindow
 
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
-                tempfile.TemporaryDirectory() as config:
-            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
-                                              "TWOPHOTON_CONFIG_HOME": config}):
-                window = LightTableWindow(Path(tmp))
-                tab = window.current_tab()
-                tab.panels["gallery"].state = replace(
-                    tab.panels["gallery"].state, x=120, y=140, snap="free", open=True)
-                tab.relayout()
-                window.close()
+        with self.window() as (window, tmp):
+            tab = window.current_tab()
+            window.pane_actions["viewer"].trigger()
+            self.app.processEvents()
 
-                # A window opened and closed without touching a panel writes nothing;
-                # this one was touched, so it left a file.
-                self.assertTrue(panels.layout_file().is_file())
-                again = LightTableWindow(Path(tmp))
-                self.assertEqual("free", again.layout_states["gallery"].snap)
-                self.assertEqual(120, again.current_tab().panels["gallery"].state.x)
+            # Drag the seams: a splitter is the only thing that decides widths, so this
+            # is what a drag does.
+            tab.splitter.setSizes([340, 430, 630])
+            tab.splitter.splitterMoved.emit(340, 1)
+            self.app.processEvents()
+            self.assertEqual(340, tab.panels["locations"].state.width)
+            self.assertEqual(430, tab.panels["gallery"].state.width)
 
+            # A wider window is a bigger picture, not a fatter sidebar.
+            window.resize(1800, 900)
+            self.app.processEvents()
+            self.assertEqual(340, tab.splitter.sizes()[0])
+            self.assertEqual(430, tab.splitter.sizes()[1])
+            self.assertGreater(tab.splitter.sizes()[2], 630)
+
+            config = os.environ["TWOPHOTON_CONFIG_HOME"]
+            window.close()
+            self.assertTrue(panels.layout_file().is_file())
+
+            with mock.patch.dict(os.environ, {"TWOPHOTON_CONFIG_HOME": config}):
+                again = LightTableWindow(tmp)
+                self.assertEqual(340, again.layout_states["locations"].width)
                 again.reset_layout()
-                self.assertEqual("right", again.current_tab().panels["gallery"].state.snap)
+                self.assertEqual(260, again.current_tab().panels["locations"].state.width)
                 QThreadPool.globalInstance().waitForDone(5000)
                 again.close()
 
-    def test_closing_the_last_panel_is_the_same_as_focus(self) -> None:
-        from apps.lighttable.app import LightTableWindow
-
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
-                tempfile.TemporaryDirectory() as config:
-            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
-                                              "TWOPHOTON_CONFIG_HOME": config}):
-                window = LightTableWindow(Path(tmp))
-                tab = window.current_tab()
-                window.toggle_focus()
-                self.assertFalse(window.focus_action.isChecked())
-                tab.panels["gallery"].closed.emit("gallery")
-                self.assertFalse(tab.pane_visible("gallery"))
-                tab.panels["locations"].closed.emit("locations")
-                self.assertTrue(window.focus_action.isChecked())
-                QThreadPool.globalInstance().waitForDone(5000)
-                window.close()
-
-    def test_the_glass_samples_what_it_is_covering(self) -> None:
-        """The proof that the panels are transparent: a capture of the viewport exists,
-        and a crop of it comes back at the size of the panel standing on it."""
+    def test_a_picture_opens_in_focus_and_a_folder_does_not(self) -> None:
         from PyQt6.QtGui import QImage
 
         from apps.lighttable.app import LightTableWindow
@@ -1084,25 +1053,109 @@ class PanelSmokeTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as config:
             with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": cache,
                                               "TWOPHOTON_CONFIG_HOME": config}):
-                image = QImage(64, 64, QImage.Format.Format_RGB32)
+                image = QImage(8, 8, QImage.Format.Format_RGB32)
                 image.fill(0xFFCC4400)
-                image.save(str(Path(tmp) / "orange.png"))
-                window = LightTableWindow(Path(tmp))
-                window.resize(1200, 800)
-                window.show()
-                self.app.processEvents()
-                tab = window.current_tab()
-                window.toggle_focus()
-                self.app.processEvents()
-                tab._refresh_backdrop()
+                shot = Path(tmp) / "shot.png"
+                image.save(str(shot))
 
-                self.assertIsNotNone(tab.glass.backdrop.image)
-                crop = tab.glass.backdrop.crop(QRect(0, 0, 200, 160))
-                self.assertEqual((200, 160), (crop.width(), crop.height()))
-                pixels = panels.image_to_rgb(crop)
-                self.assertEqual((160, 200, 3), pixels.shape)
+                # A file is a thing to look at.
+                on_image = LightTableWindow(shot)
+                tab = on_image.current_tab()
+                self.assertTrue(on_image.focus_mode)
+                self.assertTrue(tab.pane_visible("viewer"))
+                self.assertFalse(tab.pane_visible("locations"))
+                self.assertFalse(tab.pane_visible("gallery"))
+                self.assertEqual(str(shot.resolve()),
+                                 str(Path(tab.view.source_path).resolve()))
+                on_image.close()
+
+                # A folder is a thing to look through.
+                on_folder = LightTableWindow(Path(tmp))
+                tab = on_folder.current_tab()
+                self.assertFalse(on_folder.focus_mode)
+                self.assertTrue(tab.pane_visible("locations"))
+                self.assertTrue(tab.pane_visible("gallery"))
+                self.assertFalse(tab.pane_visible("viewer"))
+
+                # Double-clicking a frame is what asks for the picture.
+                tab.sheet.setCurrentRow(0)
+                tab.open_current()
+                self.assertTrue(tab.pane_visible("viewer"))
+                # …and it keeps the sheet beside it rather than going full bleed.
+                self.assertTrue(tab.pane_visible("gallery"))
                 QThreadPool.globalInstance().waitForDone(5000)
-                window.close()
+                on_folder.close()
+
+    def test_focus_is_the_viewer_alone_and_backs_out_to_browsing(self) -> None:
+        with self.window() as (window, _tmp):
+            tab = window.current_tab()
+            window.toggle_focus()
+            self.app.processEvents()
+            self.assertEqual({"viewer"},
+                             {name for name in COLUMNS if tab.pane_visible(name)})
+            # Focus is full bleed: the viewer has no title strip to give the picture a lid.
+            self.assertIsNone(tab.panels["viewer"].title)
+            self.assertEqual(tab.splitter.width(), tab.panels["viewer"].width())
+
+            window.toggle_focus()
+            self.app.processEvents()
+            self.assertEqual({"locations", "gallery"},
+                             {name for name in COLUMNS if tab.pane_visible(name)})
+
+    def test_the_arrow_keys_step_between_images_from_any_column(self) -> None:
+        """Left and right are the previous and the next picture, wherever the keyboard is.
+
+        The case that matters is the one this used to get wrong: you click a folder in the
+        tree, so the tree has the keyboard, and then you want to go through what is in it
+        without having to click a thumbnail first to hand the keys to the right widget."""
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QImage
+        from PyQt6.QtTest import QTest
+
+        with contextlib.ExitStack() as stack:
+            shoot = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            image = QImage(8, 8, QImage.Format.Format_RGB32)
+            image.fill(0xFF202020)
+            for name in ("a.png", "b.png", "c.png"):
+                image.save(str(shoot / name))
+            window, _tmp = stack.enter_context(self.window(shoot))
+            tab = window.current_tab()
+            self.assertEqual(3, tab.sheet.count())
+            tab.sheet.setCurrentRow(0)
+
+            # The keyboard is in the folder tree, which is where it lands after you pick
+            # a folder — and the arrows still belong to the pictures.
+            tab.tree.setFocus()
+            self.app.processEvents()
+            QTest.keyClick(window, Qt.Key.Key_Right)
+            self.assertEqual(1, tab.sheet.currentRow())
+            QTest.keyClick(window, Qt.Key.Key_Right)
+            QTest.keyClick(window, Qt.Key.Key_Left)
+            self.assertEqual(1, tab.sheet.currentRow())
+
+            # Neither end runs off: the first frame is the first frame.
+            tab.sheet.setCurrentRow(0)
+            QTest.keyClick(window, Qt.Key.Key_Left)
+            self.assertEqual(0, tab.sheet.currentRow())
+
+            # And they step aside the moment you are typing a file name to search for.
+            tab.search.setFocus()
+            self.app.processEvents()
+            QTest.keyClick(tab.search, Qt.Key.Key_Right)
+            self.assertEqual(0, tab.sheet.currentRow())
+
+    def test_the_facts_live_at_the_foot_of_the_sidebar(self) -> None:
+        """W is a section of the sidebar, not a fourth column: three columns is the app."""
+        with self.window() as (window, _tmp):
+            tab = window.current_tab()
+            self.assertFalse(tab.pane_visible("info"))
+            self.assertNotIn("info", tab.panels)
+            window.toggle_details()
+            self.app.processEvents()
+            self.assertTrue(tab.pane_visible("info"))
+            self.assertTrue(window.facts_action.isChecked())
+            self.assertEqual(3, tab.splitter.count())
+            self.assertTrue(tab.facts.isVisibleTo(tab.panels["locations"]))
 
 
 if __name__ == "__main__":

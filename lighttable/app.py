@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
-"""Light Table — the 2D image viewer. The picture is the window; everything else floats.
+"""Light Table — the 2D image viewer. Three columns, dark, and nothing in the way.
 
-The viewport is the whole window, edge to edge, and the places, the contact sheet and the
-facts panel are panes of glass lying on top of it: drag one by its header to anywhere,
-drag its edges to size it, shove it against a side to dock it there, double-click its
-header to roll it up. Each pane blurs and refracts what it is covering — the optics come
-from the desktop's own glass settings (`glass.py`) — so you can always see the picture
-underneath the thing you are reading. In Focus, which is how it opens, the panes are gone
-and the only chrome left is a floating rail of pull-tabs.
+Left to right: **Locations** (one line to search on, places, marks, drives, the folder
+tree, and the facts at the foot), **Gallery** (the recursive contact sheet) and the
+**Viewer**. That order is the app: where, then which, then this one. Drag the seam
+between two columns to change the proportions; there is nowhere to drag a column *to*,
+because a picture browser with a rearrangeable layout is a picture browser you have to
+re-learn every time you open it.
+
+There are no buttons. There was a bar of twelve of them across the top of the sidebar and
+it was the part of the app nobody touched twice: every one of them is a key you already
+press or a line in a menu you already have, and all of them together cost a strip of the
+one column with work to do. What is left is the search line. Verbs are the keys below,
+the menu bar, and the right-click menu on a frame.
+
+Open an image and it opens in **Focus** — the picture edge to edge, nothing else. Open a
+folder (or the app on its own) and it opens on the folder and the gallery, with no viewer
+taking up room until you double-click a frame.
 
 Marks: **A** puts the selection in the Quick Collection or takes it out again, **F** flags
 or unflags it. Both sets have a row in the sidebar and open in the sheet like a folder,
 and both are one flat text file each — marking a picture never touches the picture.
 
-Controls: LMB pan · RMB drag zoom (horizontal RMB scrubs z-stacks) · scroll zoom (slices
-on stacks) · horizontal wheel scrolls sideways · arrows / Space / Shift+Space next-prev ·
+Controls: **← and →** are the previous and the next picture from anywhere in the window,
+including with the keyboard in the folder tree — the one thing this app is for cannot
+depend on having clicked the right pane first. LMB pan · RMB drag zoom (horizontal RMB
+scrubs z-stacks) · scroll zoom (slices on stacks) · horizontal wheel scrolls sideways ·
+Space / Shift+Space next-prev ·
 Ctrl+F searches the folder · MX forward button pans, back button holds a compare with the
 last-viewed image · 0 fit · 9 fill · 1 = 1:1 · Ctrl+Shift+F focus · Alt+F fullscreen.
 
@@ -24,8 +36,11 @@ viewport to import them into the current folder; drop onto the tree to move them
 copies the selection, Ctrl+V pastes an image or files in, F2 renames, Delete trashes. A
 right-click (no drag) opens the standard context menu, including Reveal in File Manager.
 
-The window is one translucent slab: chrome and matting let the desktop through, the
-picture is the only fully opaque thing on screen.
+The material is PC-6's: a black ground, white monospaced small capitals, and a hairline
+wherever two things have to be told apart. No slabs, no radii, no shadows. The facts are
+a readout — a three-letter key at the left, the value hard right, a rule under the row —
+and the picture is the only bright thing on screen and the only thing in colour, except
+for the one orange hairline that means *this one is selected*.
 """
 
 from __future__ import annotations
@@ -46,14 +61,15 @@ from PyQt6.QtGui import (
     QImageReader, QKeySequence, QPainter, QPen, QPixmap, QPolygonF, QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QAbstractButton, QAbstractItemView, QApplication, QGraphicsPixmapItem,
+    QAbstractItemView, QApplication, QGraphicsPixmapItem,
     QGraphicsScene, QGraphicsView, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-    QPushButton, QSizePolicy, QSplitter, QStyledItemDelegate, QTabWidget, QToolBar,
+    QStyle, QStyleOptionViewItem,
+    QPushButton, QSizePolicy, QSplitter, QStyledItemDelegate, QTabWidget, QToolButton,
     QTreeView, QVBoxLayout, QWidget,
 )
 
-from apps.common import HOUSE_STYLE, INK, MUTE, PANEL, SELECT, configure_application
+from apps.common import HOUSE_STYLE, INK, SELECT, configure_application
 from apps.lighttable.core import (
     COLLECTIONS, THUMB_SIZE, add_favorite, cache_dir, collection_members,
     collection_title, filter_paths, is_image_path, load_collection, load_favorites,
@@ -62,73 +78,90 @@ from apps.lighttable.core import (
     toggle_collection, trash_command, tree_anchor, unique_destination,
 )
 from apps.lighttable.panels import (
-    Glass, GlassPanel, GlassRail, PanelState, ShadowLayer, load_layout, save_layout,
-    share_edge, snap_geometry,
+    EDGE, GUTTER, LABEL, MATTE, MONO, MUTED, PAD, RULE,
+    STYLE as PANEL_STYLE, VOID, ColumnHead, Panel, PanelState, Readout,
+    column_sizes, load_layout, mono_font, save_layout,
 )
 
 # --- The material -----------------------------------------------------------------------
-# Light Table is meant to sit behind the picture, not in front of it, so the window is a
-# single translucent slab in the house grey rather than a black box: same #0d0d0d hue,
-# just letting the desktop through. Compositors that blur behind translucent windows
-# (KWin, DWM's Mica) turn it frosted for free; where they don't, it degrades to a clean
-# tinted pane. The image itself never goes translucent — matting is the darkest, most
-# opaque layer so it stays honest to look at.
-# Chrome has to stay legible over a white window or a bright wallpaper, so the alphas are
-# high — the translucency is a hint of depth, not a window.
+# Black, white, and a hairline. The app is one unbroken black ground; the photograph is
+# the only bright thing on it and the only thing in colour. Where two surfaces have to be
+# told apart there is a 1px rule and nothing else — no slab a shade lighter, no border
+# box, no rounded corner, no shadow. This is the material PC-6 is made of, and the reason
+# is the same in both: a readout should look like it is etched into the panel, not like a
+# card lying on one.
 #
-# The panels are a different material again: real glass, painted per pixel in panels.py,
-# because they float over the picture rather than beside it. Everything inside a panel is
-# therefore styled transparent — the pane behind it is already the background, and a
-# second one stacked on top would only make it muddier.
-CHROME = QColor(13, 13, 13, 244)  # the window slab itself (painted, not styled)
-CANVAS = QColor(8, 8, 8, 244)     # the matting around the picture (painted, not styled)
-HAIR = "rgba(242,242,242,0.10)"   # hairline borders, one shade brighter than the grey
-LIFT = "rgba(242,242,242,0.07)"   # hover / open-state wash
-RAIL_INK = "#8c8c8c"              # rail labels: readable at rest, ink when open
+# Every letter of chrome is monospaced small capitals so keys and values line up in a
+# column. Orange is selection and only ever selection, and here it is a hairline too.
+CHROME = QColor(VOID)     # the window itself (painted, not styled)
+CANVAS = QColor(MATTE)    # the matting around the picture (painted, not styled)
 
-# Layered on top of the house style: everything between the window and the picture goes
-# transparent so one slab shows through the whole stack. Dialogs keep the opaque house
-# background — a modal over a translucent window would be unreadable.
 MATERIAL_STYLE = f"""
-QMainWindow::separator {{ background: {HAIR}; }}
-QWidget#tab, QSplitter {{ background: transparent; }}
-QMenuBar {{ background: transparent; }}
-QMenuBar::item:selected {{ background: {LIFT}; }}
-QMenu {{ background: {PANEL}; border: 1px solid {HAIR}; }}
-QMenu::item:selected {{ background: {LIFT}; }}
-QMenu::separator {{ background: {HAIR}; height: 1px; margin: 4px 0; }}
-QToolBar#lighttable-toolbar {{ background: transparent; border: 0;
-                               border-bottom: 1px solid {HAIR}; padding: 2px 4px; }}
-QToolBar#lighttable-toolbar QToolButton {{ background: transparent; border: 1px solid transparent;
-                               border-radius: 6px; padding: 4px 9px; color: {INK}; }}
-QToolBar#lighttable-toolbar QToolButton:hover {{ background: {LIFT}; }}
-QToolBar#lighttable-toolbar QToolButton:checked {{ background: {LIFT}; border-color: {HAIR}; }}
-QTabWidget::pane {{ border: 0; background: transparent; }}
-QTabBar {{ background: transparent; }}
-QTabBar::tab {{ background: transparent; color: {MUTE}; border: 0; padding: 5px 12px; }}
-QTabBar::tab:selected {{ color: {INK}; background: {LIFT}; }}
-QTabWidget QPushButton {{ background: transparent; border: 1px solid {HAIR};
-                          color: {MUTE}; font-size: 13px; padding: 0; }}
-QTabWidget QPushButton:hover {{ color: {INK}; border-color: {INK}; }}
-QListWidget#places, QTreeView#folders, QListWidget#sheet {{ background: transparent;
-                               border: 0; color: {INK}; }}
-/* Anything that sits on a pane of glass has to be transparent itself: the house style
-   gives every QWidget the slab grey, which over glass would read as a hole in it. */
-QWidget#glassPanel, QWidget#glassRail, QWidget#panelBody, QWidget#shadows,
-QWidget#shell, QAbstractButton#disclosure, QLabel#muted {{ background: transparent; }}
-/* The house muted grey is for text on a flat panel. On glass it has a photograph
-   behind it, so it goes up to an ink at low opacity, which stays readable over both. */
-QLabel#muted {{ color: rgba(242,242,242,0.66); }}
-QGraphicsView#canvas {{ background: transparent; border: 0; }}
-QSplitter::handle {{ background: {HAIR}; }}
-QScrollBar:vertical, QScrollBar:horizontal {{ background: transparent; }}
-QLabel#toast {{ background: rgba(13,13,13,0.72); border: 1px solid {HAIR};
-                border-radius: 8px; padding: 7px 14px; color: {INK};
-                font-size: 11px; font-weight: 700; letter-spacing: 1px; }}
-QLineEdit#search {{ background: {LIFT}; border: 1px solid {HAIR}; border-radius: 6px;
-                    padding: 4px 9px; color: {INK}; selection-background-color: {SELECT}; }}
-QLineEdit#search:focus {{ border-color: {SELECT}; }}
-"""
+* {{ font-family: {MONO}; }}
+QMainWindow, QWidget#shell, QWidget#tab {{ background: {VOID}; }}
+QMainWindow::separator {{ background: {VOID}; width: 0; height: 0; }}
+
+QMenuBar {{ background: {VOID}; color: {MUTED}; padding: 0 {PAD - 4}px;
+            border-bottom: 1px solid {RULE}; font-size: 9px; }}
+QMenuBar::item {{ background: transparent; padding: 5px 9px; }}
+QMenuBar::item:selected {{ color: {INK}; }}
+QMenu {{ background: {VOID}; border: 1px solid {RULE}; padding: 3px 0; color: {INK};
+         font-size: 10px; }}
+QMenu::item {{ padding: 5px 20px 5px 12px; }}
+QMenu::item:selected {{ background: {RULE}; }}
+QMenu::item:disabled {{ color: {MUTED}; }}
+QMenu::separator {{ background: {RULE}; height: 1px; margin: 3px 0; }}
+
+QTabWidget::pane {{ border: 0; background: {VOID}; }}
+QTabBar {{ background: {VOID}; }}
+QTabBar::tab {{ background: {VOID}; color: {MUTED}; border: 0;
+                border-bottom: 1px solid {VOID}; padding: 5px 12px;
+                font-size: 9px; letter-spacing: 1px; }}
+QTabBar::tab:selected {{ color: {INK}; border-bottom: 1px solid {INK}; }}
+
+/* The three columns. Each is the same black; the rule under a column head and the
+   hairline splitter between two of them are the whole of the structure. */
+QListWidget#places, QTreeView#folders, QListWidget#sheet, QWidget#panelBody {{
+    background: {VOID}; border: 0; color: {INK}; font-size: 10px;
+    outline: 0; show-decoration-selected: 0; }}
+QListWidget#places::item, QTreeView#folders::item {{ padding: 3px 2px; border: 0; }}
+QListWidget#places::item:selected, QTreeView#folders::item:selected {{
+    background: transparent; color: {SELECT}; }}
+QListWidget#places::item:hover, QTreeView#folders::item:hover {{ color: {INK}; }}
+QListWidget#sheet::item:selected {{ background: transparent; }}
+QTreeView#folders {{ color: {MUTED}; }}
+QLabel#muted {{ background: transparent; color: {MUTED}; font-size: 9px; }}
+QGraphicsView#canvas {{ background: {MATTE}; border: 0; }}
+QSplitter {{ background: {VOID}; }}
+
+/* The one control left in the app. A line to type on, with a rule under it — the same
+   rule as every other row, so the field reads as part of the readout, not as a box. */
+QLineEdit#search {{ background: {VOID}; border: 0; border-bottom: 1px solid {RULE};
+                    padding: 5px {PAD}px; color: {INK}; font-size: 10px;
+                    letter-spacing: 0.5px; selection-background-color: {SELECT};
+                    selection-color: {VOID}; }}
+QLineEdit#search:focus {{ border-bottom: 1px solid {SELECT}; }}
+
+QScrollBar:vertical {{ background: {VOID}; width: 6px; margin: 0; }}
+QScrollBar:horizontal {{ background: {VOID}; height: 6px; margin: 0; }}
+QScrollBar::handle {{ background: {RULE}; }}
+QScrollBar::handle:hover {{ background: {EDGE}; }}
+QScrollBar::handle:vertical {{ min-height: 24px; }}
+QScrollBar::handle:horizontal {{ min-width: 24px; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: {VOID}; }}
+
+QLabel#toast {{ background: {VOID}; border: 1px solid {RULE}; padding: 6px 12px;
+                color: {INK}; font-size: 9px; letter-spacing: 1.5px; }}
+QToolTip {{ color: {INK}; background: {VOID}; border: 1px solid {RULE}; padding: 3px 6px;
+            font-size: 9px; }}
+QInputDialog, QMessageBox {{ background: {VOID}; color: {INK}; }}
+QInputDialog QLineEdit {{ background: {VOID}; border: 1px solid {RULE}; padding: 4px;
+                          color: {INK}; }}
+QPushButton {{ background: {VOID}; border: 1px solid {RULE}; padding: 4px 12px;
+               color: {INK}; font-size: 9px; letter-spacing: 1px; }}
+QPushButton:hover {{ border-color: {INK}; }}
+""" + PANEL_STYLE
 
 
 def image_from_mime(mime: QMimeData) -> QImage | None:
@@ -162,15 +195,20 @@ FAVORITE_ROLE = Qt.ItemDataRole.UserRole + 1    # pinned by the user vs. a live 
 COLLECTION_ROLE = Qt.ItemDataRole.UserRole + 2  # a place that is a set, not a folder
 MARKS_ROLE = Qt.ItemDataRole.UserRole + 3       # which sets this thumbnail is in
 
-# Where the panels start out on a machine that has never run Light Table: the places down
-# the left, the sheet down the right, the facts panel floating at the bottom. All closed,
-# because the app opens in Focus and the first thing you should see is the picture.
+# The three columns, in the only order they are ever in, and the width each starts at on a
+# machine that has never run Light Table. `open` here is the browsing arrangement —
+# locations and gallery, no viewer — which is what opening a *folder* gives you; opening
+# an image overrides it with Focus. The rightmost open column absorbs the rest of the
+# window, so these are two sidebar widths and a hint, not a carve-up.
+COLUMNS = ("locations", "gallery", "viewer")
 DEFAULT_PANELS = (
-    PanelState("locations", x=26, y=60, width=300, height=560, open=False, snap="left"),
-    PanelState("gallery", x=900, y=60, width=380, height=620, open=False, snap="right"),
-    PanelState("info", x=340, y=560, width=460, height=150, open=False, snap="free"),
+    PanelState("locations", width=260, open=True),
+    PanelState("gallery", width=520, open=True),
+    PanelState("viewer", width=760, open=False),
 )
-PANEL_TITLES = {"locations": "Locations", "gallery": "Gallery", "info": "Facts"}
+# The viewer's is None on purpose: see Panel. The other two are narrow columns of similar
+# content and the label is what tells them apart at a glance.
+PANEL_TITLES = {"locations": "Locations", "gallery": "Gallery", "viewer": None}
 
 
 class MarkDelegate(QStyledItemDelegate):
@@ -184,7 +222,22 @@ class MarkDelegate(QStyledItemDelegate):
     SIZE = 15
 
     def paint(self, painter, option, index) -> None:
-        super().paint(painter, option, index)
+        # Qt would fill the whole cell with the selection colour. A block of orange the
+        # size of a photograph is not a mark on a photograph, it is a replacement for
+        # one — so the fill is taken away here and the selection is drawn as a hairline
+        # box around the frame instead, the same weight as every other rule in the app.
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        plain = QStyleOptionViewItem(option)
+        if selected:
+            plain.state &= ~QStyle.StateFlag.State_Selected
+        super().paint(painter, plain, index)
+        if selected:
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(SELECT), 1))
+            painter.drawRect(option.rect.adjusted(0, 0, -1, -1))
+            painter.restore()
         marks = index.data(MARKS_ROLE) or ()
         if not marks:
             return
@@ -279,19 +332,17 @@ class Viewport(QGraphicsView):
         self.item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self.scene().addItem(self.item)
         # The matting is painted, not styled: a stylesheet background on a QGraphicsView
-        # lands on the frame, not the canvas. Near-opaque — you have to be able to trust
-        # what a picture looks like — but still part of the same slab.
+        # lands on the frame, not the canvas. It is the darkest surface in the app, one
+        # step under everything else, because whatever surrounds a picture is being
+        # compared to it whether you meant to or not.
         self.setBackgroundBrush(CANVAS)
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.viewport().setAutoFillBackground(False)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # Panels lie on top of the picture now, so the view can no longer scroll its own
-        # backing store and repaint the sliver that moved — whatever is under a pane of
-        # glass has to be genuinely up to date before the glass samples it.
-        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
-        self.repainted = None  # set by the tab: "the backdrop is stale, re-capture it"
+        # Nothing lies on top of the picture any more, so the view is free to scroll its
+        # own backing store and repaint only the sliver that moved.
         self.setAcceptDrops(True)
         self.source_path: str | None = None  # file backing the picture on screen
         self.frames: list[QImage] = []
@@ -399,14 +450,6 @@ class Viewport(QGraphicsView):
         if self._fitted:
             self.fit()
 
-    def paintEvent(self, event) -> None:
-        """Tell the tab the picture moved. Not a repaint of the panels — a note that the
-        backdrop behind them is out of date, which the tab acts on once, later, outside
-        the paint it was told during."""
-        super().paintEvent(event)
-        if self.repainted is not None:
-            self.repainted()
-
     # -- gestures ------------------------------------------------------------------
     def wheelEvent(self, event) -> None:
         dx, dy = event.angleDelta().x(), event.angleDelta().y()
@@ -504,9 +547,13 @@ class ContactSheet(QListWidget):
         self.thumb = 128
         self._apply_size()
         self.setItemDelegate(MarkDelegate(self))
+        # Selection is a ring, not a block. A filled orange cell the size of a
+        # photograph replaces the photograph; the ring is drawn by the delegate on the
+        # cell's own padding, which is black, so it never lands on the picture and never
+        # gets lost against a light edge.
         self.setStyleSheet(
-            f"QListWidget::item{{color:{MUTE}; border:1px solid transparent;}}"
-            f"QListWidget::item:selected{{border:1px solid {SELECT}; background:{LIFT};}}")
+            f"QListWidget::item{{color:{MUTED}; border:0; padding:3px;}}"
+            f"QListWidget::item:selected{{background:transparent; color:{INK};}}")
         self._rmb_last = None          # local pos of the last right-button event
         self._rmb_press = None         # global pos of the right-button press
         self._rmb_moved = False        # did the right button drag (resize) or just click?
@@ -670,9 +717,13 @@ class Places(QListWidget):
         super().__init__()
         self.setObjectName("places")
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # The selected place is the one written in orange. Nothing in this app is told
+        # apart by a filled rectangle any more, and the sidebar is the place that proves
+        # it: a list of one-line answers, one of which is lit.
         self.setStyleSheet(
-            f"QListWidget::item{{padding:5px 9px;}}"
-            f"QListWidget::item:selected{{border-left:2px solid {SELECT}; background:{LIFT};}}"
+            f"QListWidget::item{{padding:4px 9px; border:0;}}"
+            f"QListWidget::item:hover{{color:{INK};}}"
+            f"QListWidget::item:selected{{background:transparent; color:{SELECT};}}"
         )
         self.itemActivated.connect(self._activate)
         self.itemClicked.connect(self._activate)
@@ -723,7 +774,7 @@ class Places(QListWidget):
     def _add_heading(self, text: str) -> None:
         item = QListWidgetItem(text)
         item.setFlags(Qt.ItemFlag.NoItemFlags)
-        item.setForeground(QColor(MUTE))
+        item.setForeground(QColor(LABEL))
         font = item.font()
         font.setPointSizeF(max(6.0, font.pointSizeF() - 2))
         font.setBold(True)
@@ -818,89 +869,17 @@ class Places(QListWidget):
         self.favorites_changed.emit()
 
 
-class DisclosureButton(QAbstractButton):
-    """A hairline tab on the window edge with its label running bottom-to-top — the
-    handle you pull a column out by. Checked means the column is open."""
-
-    WIDTH = 22
-
-    def __init__(self, text: str):
-        super().__init__()
-        self.setObjectName("disclosure")
-        self.setText(text)
-        self.setCheckable(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(f"Show or hide {text.lower()}")
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-
-    def sizeHint(self) -> QSize:
-        metrics = self.fontMetrics()
-        return QSize(self.WIDTH, metrics.horizontalAdvance(self.text()) + 30)
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self.isChecked() or self.underMouse():
-            painter.fillRect(self.rect(), QColor(242, 242, 242, 15 if self.isChecked() else 8))
-        painter.translate(self.width() / 2, self.height() / 2)
-        painter.rotate(-90)
-        font = QFont(self.font())
-        font.setPointSizeF(max(6.5, font.pointSizeF() - 2.5))
-        font.setBold(True)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.6)
-        painter.setFont(font)
-        painter.setPen(QColor(INK) if self.isChecked() else QColor(RAIL_INK))
-        painter.drawText(QRect(-self.height() // 2, -self.WIDTH // 2, self.height(), self.WIDTH),
-                         int(Qt.AlignmentFlag.AlignCenter), self.text().upper())
-
-
-class DisclosureRail(GlassRail):
-    """The pull-tabs, on a pane of their own down the left of the picture.
-
-    In Focus every panel is gone and this little pill is the only chrome left on screen,
-    so it is made of the same glass as the panels and floats the same way: pull a tab and
-    that panel comes back exactly where you left it."""
-
-    toggled = pyqtSignal(str, bool)
-    PADDING = 7
-
-    def __init__(self, glass: Glass, parent: QWidget):
-        super().__init__(glass, parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, self.PADDING, 0, self.PADDING)
-        layout.setSpacing(4)
-        self.buttons: dict[str, DisclosureButton] = {}
-        for pane, label in (("locations", "Locations"), ("gallery", "Gallery"),
-                            ("info", "Facts")):
-            button = DisclosureButton(label)
-            button.clicked.connect(
-                lambda checked, name=pane: self.toggled.emit(name, checked))
-            layout.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
-            self.buttons[pane] = button
-
-    def sizeHint(self) -> QSize:
-        tall = sum(button.sizeHint().height() for button in self.buttons.values())
-        spacing = 4 * (len(self.buttons) - 1) + 2 * self.PADDING
-        return QSize(DisclosureButton.WIDTH + 6, tall + spacing)
-
-    def sync(self, states: dict[str, bool]) -> None:
-        for pane, button in self.buttons.items():
-            button.setChecked(states.get(pane, False))
-            button.update()
-
-
 class Tab(QWidget):
-    """One tab: the picture, edge to edge, with its own panels floating over it.
+    """One tab: three columns side by side, and the folder they are all looking at.
 
-    A tab owns a folder (or one of the two sets of marks), the panels that are open on it
-    and where they sit, and the glass they are made of. Two tabs can therefore be looking
-    at the same folder in completely different arrangements, which is the point of having
-    tabs at all."""
+    A tab owns a folder (or one of the two sets of marks), which of the three columns are
+    open, and how wide they are. Two tabs can be on the same folder with different columns
+    open, which is the point of having tabs at all — one to cull in, one to look in."""
 
     panes_changed = pyqtSignal()
     favorites_changed = pyqtSignal()
     marks_changed = pyqtSignal()
-    backdrop_refreshed = pyqtSignal()
+    search_typed = pyqtSignal(str)
 
     def __init__(self, start_dir: Path, layout_states: dict[str, PanelState] | None = None):
         super().__init__()
@@ -913,7 +892,6 @@ class Tab(QWidget):
         self.filter_text = ""
         self.collection: str | None = None  # showing a set of marks instead of a folder
         self.marks = load_marks()           # membership, cached: the sheet asks per thumb
-        self.top_inset = 0                  # room the window's command bar is taking
         self._syncing = False
 
         self.model = QFileSystemModel(self)
@@ -938,6 +916,9 @@ class Tab(QWidget):
         self.sheet.images_dropped.connect(self.import_and_view)
         self.sheet.image_data_dropped.connect(self.save_and_view_image)
         self.sheet.context_requested.connect(self.show_context_menu)
+        # Single click picks a frame; double click is the one that costs you a column, so
+        # it is the one that opens the viewer.
+        self.sheet.itemDoubleClicked.connect(lambda _item: self.open_current())
 
         self.view = Viewport()
         self.view.request_step.connect(self.step)
@@ -945,50 +926,69 @@ class Tab(QWidget):
         self.view.image_data_dropped.connect(self.save_and_view_image)
         self.view.context_requested.connect(self.show_context_menu)
 
-        # Detail panels: folder facts under the tree, image facts under the sheet. W toggles.
-        self.folder_info = QLabel(objectName="muted")
-        self.folder_info.setWordWrap(True)
-        self.folder_info.setContentsMargins(10, 6, 10, 8)
-        self.image_info = QLabel(objectName="muted")
-        self.image_info.setWordWrap(True)
-        self.image_info.setContentsMargins(10, 6, 10, 8)
+        # Search: one line at the top of the sidebar, under the column head. It belongs
+        # to the tab and not to the window because the question is per folder — two tabs
+        # are two folders and two different things being looked for in them.
+        self.search = QLineEdit()
+        self.search.setObjectName("search")
+        self.search.setPlaceholderText("SEARCH")
+        self.search.setFont(mono_font(10, spacing=0.5))
+        self.search.textChanged.connect(self._typed)
 
-        # The locations panel is split top/bottom: pinned places, the two sets of marks
-        # and the drives above, the live folder tree below. Drag the handle to trade one
-        # for the other.
+        # Facts: folder above image, at the foot of the sidebar where the rest of the
+        # answers about "where am I" already are. W shows and hides it. Both are readouts
+        # now — key left, value right, a rule per row — and not two paragraphs of grey.
+        self.folder_info = Readout()
+        self.image_info = Readout()
+        self.facts = self._facts_panel()
+        self.facts.setVisible(False)
+
+        # The sidebar is itself split top/bottom: pinned places, the two sets of marks and
+        # the drives above, the live folder tree below. Drag the handle to trade one for
+        # the other — the same rule as the columns, one dimension down.
         self.location_split = QSplitter(Qt.Orientation.Vertical)
+        self.location_split.setObjectName("sidebarSplit")
+        self.location_split.setHandleWidth(GUTTER)
+        self.location_split.setChildrenCollapsible(False)
         self.location_split.addWidget(self.places)
         self.location_split.addWidget(self.tree)
         self.location_split.setSizes([300, 400])
         self.location_split.setStretchFactor(1, 1)
-        self.location_split.setStyleSheet("QSplitter::handle{height:1px;}")
 
-        # Everything above floats over the picture, in three stacked planes: the viewport
-        # fills the window, the shadows lie on it, and the panels lie on those. Qt paints
-        # siblings in the order they were made, so the order here *is* the depth order.
-        self.view.setParent(self)
-        self.view.repainted = self._backdrop_stale
-        self.glass = Glass(self.view)
-        self.shadows = ShadowLayer(self)
-        self.shadows.radius = self.glass.radius
+        sidebar = QWidget()
+        sidebar.setObjectName("panelBody")
+        stack = QVBoxLayout(sidebar)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(0)
+        stack.addWidget(self.location_split, 1)
+        stack.addWidget(self.facts, 0)
 
-        states = dict(layout_states or {state.name: state for state in DEFAULT_PANELS})
-        self.panels: dict[str, GlassPanel] = {}
-        for name, content in (("locations", self.location_split),
-                              ("gallery", self.sheet),
-                              ("info", self._facts_panel())):
-            panel = GlassPanel(states[name], PANEL_TITLES[name], content, self.glass, self)
-            panel.moved.connect(self.relayout)
-            panel.closed.connect(lambda pane: self._rail_toggled(pane, False))
+        # The three columns, in the only order they come in. The splitter is the whole
+        # layout engine: it sizes, it does not rearrange, and Qt gives us the drag handles
+        # and the minimums for free.
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setObjectName("columns")
+        self.splitter.setHandleWidth(GUTTER)
+        self.splitter.setChildrenCollapsible(False)
+        self.panels: dict[str, Panel] = {}
+        for name, content, header in (("locations", sidebar, self.search),
+                                      ("gallery", self.sheet, None),
+                                      ("viewer", self.view, None)):
+            panel = Panel(name, PANEL_TITLES[name], content, header, self)
             self.panels[name] = panel
-        self.shadows.panels = list(self.panels.values())
-        # The old names for the two columns, because they are still what the rest of the
-        # app (and the tests) call them — they are panels now, not columns.
+            self.splitter.addWidget(panel)
+        self.splitter.setStretchFactor(COLUMNS.index("viewer"), 1)
+        self.splitter.splitterMoved.connect(self._widths_changed)
+
+        frame = QVBoxLayout(self)
+        frame.setContentsMargins(0, 0, 0, 0)
+        frame.setSpacing(0)
+        frame.addWidget(self.splitter, 1)
+
+        # The old names for the two sidebars, because they are still what the rest of the
+        # app (and the tests) call them.
         self.location_column = self.panels["locations"]
         self.gallery_column = self.panels["gallery"]
-
-        self.rail = DisclosureRail(self.glass, self)
-        self.rail.toggled.connect(self._rail_toggled)
 
         self.toast = QLabel("", self)
         self.toast.setObjectName("toast")
@@ -997,109 +997,95 @@ class Tab(QWidget):
         self._toast_timer.setSingleShot(True)
         self._toast_timer.timeout.connect(lambda: self.toast.setVisible(False))
 
-        # Re-capturing the backdrop is cheap but not free, and panning a picture asks for
-        # it on every frame, so it is coalesced: many "it moved" notes, one capture.
-        self._backdrop_timer = QTimer(self)
-        self._backdrop_timer.setSingleShot(True)
-        self._backdrop_timer.setInterval(24)
-        self._backdrop_timer.timeout.connect(self._refresh_backdrop)
-
+        self.apply_layout(dict(layout_states or {state.name: state
+                                                 for state in DEFAULT_PANELS}))
         self.set_folder(start_dir)
-        self.relayout()
 
     def _facts_panel(self) -> QWidget:
-        """Folder facts over image facts — what W used to toggle under the two columns,
-        now one panel you can put wherever you actually look."""
+        """Folder facts over image facts, at the foot of the sidebar. W toggles it.
+
+        Two readouts stacked, each row a key and a value over a hairline — the same
+        instrument the hardware monitor uses, because the question is the same one: what
+        is in front of me right now, in as few characters as it can be said in."""
         box = QWidget()
         box.setObjectName("panelBody")
         facts = QVBoxLayout(box)
-        facts.setContentsMargins(0, 2, 0, 2)
+        facts.setContentsMargins(0, 0, 0, 0)
         facts.setSpacing(0)
         facts.addWidget(self.folder_info, 0)
         facts.addWidget(self.image_info, 0)
-        facts.addStretch(1)
         return box
 
-    # -- the floating layout -----------------------------------------------------
+    def _typed(self, text: str) -> None:
+        """The search line, live. Filter this tab, then say so — the window decides
+        whether a result nobody can see is worth opening the gallery for."""
+        self.set_filter(text)
+        self.search_typed.emit(text)
+
+    # -- the columns -------------------------------------------------------------
+    def relayout(self) -> None:
+        """Show the open columns, hide the closed ones, and give the splitter its widths.
+
+        This is the one place geometry is decided. Nothing else sets a column's size, so
+        what is on screen and what gets saved can never disagree."""
+        ordered = [self.panels[name].state for name in COLUMNS]
+        for name in COLUMNS:
+            panel = self.panels[name]
+            panel.setVisible(panel.state.open)
+        self.splitter.setSizes(column_sizes(ordered, max(1, self.splitter.width())))
+
     def resizeEvent(self, event) -> None:
+        """Re-assert the widths. Left to itself a splitter divides new space between all
+        of its children in proportion, which would fatten the sidebar every time the
+        window grew; here the sidebars keep the width they were given and the rightmost
+        open column takes the difference, so a wider window is a bigger picture."""
         super().resizeEvent(event)
-        self.view.setGeometry(self.rect())
-        self.shadows.setGeometry(self.rect())
         self.relayout()
 
-    def panel_area(self) -> QRect:
-        """The part of the tab panels are allowed in: everything except the strip the
-        command bar is already lying on."""
-        return self.rect().adjusted(0, self.top_inset, 0, 0)
+    def _widths_changed(self, *args) -> None:
+        """The user dragged a seam. Take the new widths back into the states, so the
+        arrangement that gets saved is the one that is on screen.
 
-    def relayout(self) -> None:
-        """Put every panel where its state says, and the rail where there is room.
+        The rightmost open column is skipped: its width is whatever is left over, not a
+        setting, and recording it would mean the gallery remembered the full width of the
+        window from when it had no viewer beside it.
 
-        This is the one place geometry is decided. Panels tell it what they want by
-        changing their own state and emitting `moved`; nothing sets a panel's geometry
-        behind its back, so what is on screen and what gets saved can never disagree."""
-        area = self.panel_area()
-        states = [panel.state for panel in self.panels.values() if panel.state.open]
-        rects = share_edge(states, area)
-        for name, panel in self.panels.items():
-            panel.apply_state(panel.state,
-                              rects.get(name) or snap_geometry(panel.state, area))
-        self.shadows.setGeometry(self.rect())
-        self.shadows.raise_()
-        for panel in self.panels.values():
-            panel.raise_()
-        self._place_rail()
-        self.shadows.update()
-
-    def _place_rail(self) -> None:
-        """The rail floats clear of the window edge, and steps aside for a panel docked
-        to the left — the tabs are a handle, not a thing to fish out from under a pane."""
-        hint = self.rail.sizeHint()
-        left = 10
-        for panel in self.panels.values():
-            if panel.state.open and panel.state.snap == "left":
-                left = max(left, panel.geometry().right() + 10)
-        area = self.panel_area()
-        top = max(area.top() + 10, area.top() + (area.height() - hint.height()) // 2)
-        self.rail.setGeometry(left, top, hint.width(), hint.height())
-        self.rail.raise_()
-        self.rail.update()
+        A tab that is not on screen is skipped entirely. Qt gives an unshown widget a
+        nominal size, and a splitter asked to divide it hands every column its minimum —
+        so reading widths off a tab being built would save a sidebar squeezed to 150px as
+        if that were the arrangement you chose."""
+        if not self.isVisible():
+            return
+        sizes = self.splitter.sizes()
+        open_names = [name for name in COLUMNS if self.panels[name].state.open]
+        for name, size in zip(COLUMNS, sizes):
+            panel = self.panels[name]
+            if panel.state.open and size > 0 and name != open_names[-1]:
+                panel.state = replace(panel.state, width=size)
 
     def panel_states(self) -> list[PanelState]:
-        return [panel.state for panel in self.panels.values()]
+        self._widths_changed()
+        return [self.panels[name].state for name in COLUMNS]
 
     def apply_layout(self, states: dict[str, PanelState]) -> None:
         for name, panel in self.panels.items():
             if name in states:
                 panel.state = states[name]
         self.relayout()
-        self.sync_rail()
-
-    # -- the glass ---------------------------------------------------------------
-    def _backdrop_stale(self) -> None:
-        """The picture moved. Note it and get out — this arrives from inside the
-        viewport's own paint, which is the last place to start capturing it."""
-        if any(panel.state.open for panel in self.panels.values()) or self.rail.isVisible():
-            self._backdrop_timer.start()
-
-    def _refresh_backdrop(self) -> None:
-        self.glass.backdrop.refresh()
-        for panel in self.panels.values():
-            if panel.isVisible():
-                panel.update()
-        if self.rail.isVisible():
-            self.rail.update()
-        self.backdrop_refreshed.emit()  # the window's command bar is on this glass too
 
     def flash(self, message: str) -> None:
         """Say what just happened, over the picture, briefly.
 
         In Focus there is no sheet and no sidebar, so pressing A or F would otherwise
-        change something you cannot see. This is the receipt."""
+        change something you cannot see. This is the receipt, and it sits over whichever
+        column is furthest right — the picture if there is one, the sheet otherwise —
+        because that is where you were looking when you pressed the key."""
         self.toast.setText(message)
         self.toast.adjustSize()
-        self.toast.move((self.width() - self.toast.width()) // 2,
-                        self.height() - self.toast.height() - 28)
+        open_panels = [self.panels[name] for name in COLUMNS if self.panels[name].state.open]
+        over = open_panels[-1].geometry() if open_panels else self.rect()
+        self.toast.move(over.center().x() - self.toast.width() // 2,
+                        over.bottom() - self.toast.height() - 28)
         self.toast.setVisible(True)
         self.toast.raise_()
         self._toast_timer.start(1500)
@@ -1235,22 +1221,33 @@ class Tab(QWidget):
             self.sheet.setCurrentRow(0)
         heading = (collection_title(self.collection) if self.collection is not None
                    else str(self.folder))
-        self.folder_info.setText(f"{heading}\n{self._count_line()}")
+        self.folder_info.setText("\n".join([f"dir\t{heading}", *self._count_rows()]))
+        head = self.panels["gallery"].title
+        if head is not None:
+            head.set_value(f"{len(self.paths)}/{len(self.all_paths)}"
+                           if self.filter_text else f"{len(self.all_paths)}")
 
-    def _count_line(self) -> str:
+    def _count_rows(self) -> list[str]:
+        """What is on the sheet, one fact per row.
+
+        A count and the name of the newest frame are two different answers, and a row
+        that carries both is a row where one of them gets elided away — so they are two
+        rows, keyed like everything else in the readout."""
         shown = len(self.paths)
         images = "image" if shown == 1 else "images"
         if self.filter_text:
-            return (f"{shown} of {len(self.all_paths)} images "
-                    f"matching “{self.filter_text}”")
+            return [f"img\t{shown} of {len(self.all_paths)} {images}",
+                    f"qry\t{self.filter_text}"]
         if self.collection is not None:
             # A set keeps the order you built it in — the only order in the app that is
             # yours rather than the disk's — so "newest first" would be a lie here.
             missing = len(load_collection(self.collection)) - len(self.all_paths)
-            gone = f" · {missing} not on this machine" if missing > 0 else ""
-            return f"{shown} {images}, in the order you marked them{gone}"
-        newest = Path(self.paths[0]).name if self.paths else "—"
-        return f"{shown} {images} (recursive) · newest: {newest}"
+            rows = [f"img\t{shown} {images}, in the order you marked them"]
+            if missing > 0:
+                rows.append(f"off\t{missing} not on this machine")
+            return rows
+        return [f"img\t{shown} {images} (recursive)",
+                f"new\t{Path(self.paths[0]).name if self.paths else '—'}"]
 
     def _thumb_ready(self, row: int, path: str, thumb_file: str) -> None:
         if row < self.sheet.count() and self.paths[row] == path:
@@ -1284,13 +1281,14 @@ class Tab(QWidget):
         stack = f" · {len(frames)} slices" if len(frames) > 1 else ""
         marks = " · ".join(collection_title(name) for name, members in self.marks.items()
                            if path in members)
-        self.image_info.setText(f"{Path(path).name}\n{dims}{stack} · {size_kb:,.0f} KB"
-                                + (f"\n{marks}" if marks else ""))
+        self.image_info.setText(f"sel\t{Path(path).name}\ndim\t{dims}{stack}"
+                                f"\nsiz\t{size_kb:,.0f} KB"
+                                + (f"\nmrk\t{marks}" if marks else ""))
 
     def set_details_visible(self, on: bool) -> None:
-        """W: the facts panel, which used to be two strips pinned under the columns and is
-        now a panel you can put where you actually look."""
-        self.set_pane_visible("info", on)
+        """W: the facts, at the foot of the sidebar. Not a column of its own — three
+        columns is the layout, and a fourth one for two lines of text is not a layout."""
+        self.facts.setVisible(on)
 
     def step(self, direction: int) -> None:
         row = self.sheet.currentRow() + direction
@@ -1507,37 +1505,45 @@ class Tab(QWidget):
     PANES = ("locations", "gallery", "info", "viewer")
 
     def _panes(self) -> dict[str, QWidget]:
-        return {**self.panels, "viewer": self.view}
+        return dict(self.panels)
 
     def set_focus_mode(self, on: bool) -> None:
-        """Focus closes every panel. Coming back out reopens the two you browse with —
-        the facts panel stays where you left it, because W is its own switch."""
-        for name in ("locations", "gallery"):
-            self.panels[name].state = replace(self.panels[name].state, open=not on)
-        if on:
-            self.panels["info"].state = replace(self.panels["info"].state, open=False)
+        """Focus is the viewer and nothing else. Coming back out is the browsing
+        arrangement — the folder and the gallery — which is what the app opens on when you
+        hand it a folder rather than a picture."""
+        self._widths_changed()
+        for name in COLUMNS:
+            open_now = (name == "viewer") if on else (name != "viewer")
+            self.panels[name].state = replace(self.panels[name].state, open=open_now)
         self.relayout()
-        self.sync_rail()
 
     def set_pane_visible(self, pane: str, on: bool) -> None:
+        """Open or close one column. The last one open cannot be closed — a window with
+        nothing in it is not a state anyone asked for — so closing it opens the viewer
+        instead, which is Focus."""
         if pane not in self.panels:
             return
-        panel = self.panels[pane]
-        panel.state = replace(panel.state, open=on)
+        self._widths_changed()
+        self.panels[pane].state = replace(self.panels[pane].state, open=on)
+        if not any(panel.state.open for panel in self.panels.values()):
+            self.panels["viewer"].state = replace(self.panels["viewer"].state, open=True)
         self.relayout()
-        self.sync_rail()
 
     def pane_visible(self, pane: str) -> bool:
-        if pane == "viewer":
-            return True
+        if pane == "info":
+            return self.facts.isVisible()
         return bool(self.panels[pane].state.open)
 
-    def sync_rail(self) -> None:
-        self.rail.sync({pane: self.pane_visible(pane) for pane in self.panels})
+    def open_current(self) -> None:
+        """Show the selected frame in the viewer, opening that column if it is closed.
 
-    def _rail_toggled(self, pane: str, visible: bool) -> None:
-        self.set_pane_visible(pane, visible)
-        self.panes_changed.emit()
+        Double-clicking a thumbnail means "this one" — the picture has to end up somewhere
+        you can see it, and the gallery keeps its place beside it rather than being thrown
+        away for a full-bleed view you did not ask for."""
+        if not self.pane_visible("viewer"):
+            self.set_pane_visible("viewer", True)
+            self.panes_changed.emit()
+        self.view.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def new_folder(self, name: str) -> Path | None:
         target = self.folder / name.strip()
@@ -1550,44 +1556,18 @@ class Tab(QWidget):
         return target
 
 
-class CommandBar(GlassRail):
-    """The search box and the verbs, on a pane of glass floating over the picture.
-
-    It belongs to the window rather than to a tab — the actions are the window's — but the
-    glass it is made of belongs to whichever tab is in front, because that is the picture
-    it is lying on. Hence the two overrides: ask the current tab for its glass, and tell
-    that glass where this bar sits inside the tab."""
-
-    MARGIN = 10
-
-    def __init__(self, window: LightTableWindow, parent: QWidget):
-        super().__init__(None, parent)
-        self.window_ref = window
-
-    def current_glass(self):
-        tab = self.window_ref.current_tab()
-        return tab.glass if tab is not None else None
-
-    def backdrop_origin(self) -> QPoint:
-        tab = self.window_ref.current_tab()
-        if tab is None:
-            return self.pos()
-        return tab.mapFrom(self.parentWidget(), self.pos())
-
-
 class Shell(QWidget):
-    """The whole window under the menu bar: the tabs at full size, the command bar lying
-    on top of them. No layout, because a layout would make room for the bar and the point
-    of the bar is that the picture runs underneath it."""
+    """The whole window under the menu bar: the tabs, filling it. Nothing floats any
+    more, so this is a plain box with one thing in it."""
 
     def __init__(self, window: LightTableWindow):
         super().__init__()
         self.setObjectName("shell")
         self.window_ref = window
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self.window_ref.lay_out_shell()
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(0)
+        self.box = box
 
 
 class LightTableWindow(QMainWindow):
@@ -1596,12 +1576,9 @@ class LightTableWindow(QMainWindow):
         self.setWindowTitle("Light Table — 2Photon / The Elements")
         self.setWindowIcon(QIcon(str(ICON)))
         self.resize(1440, 900)
-        # One translucent slab, blurred by the compositor where one is offered.
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.focus_mode = True
         self.details_on = False
-        # Where the panels were last time. New tabs start from the same arrangement, and
-        # then go their own way — it is a starting point, not a shared layout.
+        # Where the columns were last time. New tabs start from the same proportions and
+        # then go their own way — a starting point, not a shared layout.
         self.layout_states = load_layout(DEFAULT_PANELS)
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -1611,28 +1588,30 @@ class LightTableWindow(QMainWindow):
         self.tabs.tabCloseRequested.connect(self._close_tab)
         self.tabs.tabBarDoubleClicked.connect(self._rename_tab)
         self.tabs.currentChanged.connect(self._sync_pane_actions)
-        self.tabs.currentChanged.connect(self._sync_search)
-        add_tab = QPushButton("＋")
-        add_tab.setToolTip("New tab (Ctrl+T)")
-        add_tab.setFixedSize(30, 26)
-        add_tab.clicked.connect(lambda: self.new_tab(self.current_tab().folder))
-        self.tabs.setCornerWidget(add_tab, Qt.Corner.TopRightCorner)
+        # No corner widget: a floating ＋ in the top right is a button that is not at the
+        # top of the sidebar with the others, and it sits over the Gallery's own header.
+        # New tabs are Ctrl+T, the File menu, and the ＋ Tab button on the bar.
         # One tab is not a set of tabs, it is just this window — so the strip only appears
-        # once there is a choice to make, and until then the picture starts at the top.
+        # once there is a choice to make.
         self.tabs.tabBar().setVisible(False)
-        self.tabs.currentChanged.connect(self.lay_out_shell)
 
         self.shell = Shell(self)
-        self.tabs.setParent(self.shell)
+        self.shell.box.addWidget(self.tabs, 1)
         self.setCentralWidget(self.shell)
         self._build_menus()
-        self._build_toolbar()
         self._build_keys()
+
+        # How the app opens is a question about what you handed it. A picture is a thing
+        # you want to look at, so it opens in Focus, full bleed. A folder — or nothing at
+        # all — is a thing you want to look *through*, so it opens on the folder and the
+        # gallery and does not spend a third of the window on a picture you have not
+        # picked yet.
         start = Path(start) if start else Path.home() / "Pictures"
         if start.is_file():
             folder, file = start.parent, start
         else:
             folder, file = (start if start.is_dir() else Path.home()), None
+        self.focus_mode = file is not None
         self.new_tab(folder)
         if file is not None:
             tab = self.current_tab()
@@ -1640,9 +1619,9 @@ class LightTableWindow(QMainWindow):
                 tab.sheet.setCurrentRow(tab.paths.index(str(file)))
 
     def paintEvent(self, event) -> None:
-        """The slab. A translucent window paints no background of its own, and a
-        stylesheet rule on QMainWindow does not fill one either — so fill it here, once,
-        and let every child compose on top of it."""
+        """The window under everything. Opaque, and the darkest thing in the app after the
+        matting — a picture viewer that lets the wallpaper through is a picture viewer
+        that lies about what the picture looks like."""
         QPainter(self).fillRect(self.rect(), CHROME)
         super().paintEvent(event)
 
@@ -1654,18 +1633,14 @@ class LightTableWindow(QMainWindow):
         tab.panes_changed.connect(self._sync_pane_actions)
         tab.favorites_changed.connect(self._reload_places)
         tab.marks_changed.connect(self._marks_changed)
-        tab.backdrop_refreshed.connect(self._repaint_chrome)
+        tab.search_typed.connect(self._search_changed)
+        tab.search.installEventFilter(self)  # bare keys step aside while typing
         self.tabs.addTab(tab, tab.folder.name or str(tab.folder))
         self.tabs.setCurrentWidget(tab)
         tab.set_focus_mode(self.focus_mode)
-        tab.rail.setVisible(not self.isFullScreen())
+        tab.set_details_visible(self.details_on)
         self.tabs.tabBar().setVisible(self.tabs.count() > 1)
-        self.lay_out_shell()
         self._sync_pane_actions()
-
-    def _repaint_chrome(self) -> None:
-        if self.sender() is self.current_tab() and hasattr(self, "command_bar"):
-            self.command_bar.update()
 
     def _marks_changed(self) -> None:
         """One set of marks, every tab: the files underneath are the same two, so a flag
@@ -1699,7 +1674,7 @@ class LightTableWindow(QMainWindow):
         if self.tabs.count() > 1:
             self.tabs.removeTab(index)
             self.tabs.tabBar().setVisible(self.tabs.count() > 1)
-            self.lay_out_shell()
+
 
     def _rename_tab(self, index: int) -> None:
         if index < 0:
@@ -1761,98 +1736,27 @@ class LightTableWindow(QMainWindow):
         act(view_menu, "Fit", "0", lambda: self.current_tab().view.fit())
         act(view_menu, "Fill", "9", lambda: self.current_tab().view.fill())
         act(view_menu, "1:1", "1", lambda: self.current_tab().view.one_to_one())
-        act(view_menu, "Facts", "W", self.toggle_details)
-        act(view_menu, "Focus Mode", "Ctrl+Shift+F", self.toggle_focus)
+        view_menu.addSeparator()
+        # Everything below used to be a row of buttons at the top of the sidebar. They
+        # were pressed about as often as a menu item is, and they cost a strip of the one
+        # column that has real work to do, so they are menu items — checkable ones, which
+        # is the part the buttons were actually carrying: a statement of what is open.
+        self.pane_actions: dict[str, QAction] = {}
+        for pane, label in (("locations", "Locations"), ("gallery", "Gallery"),
+                            ("viewer", "Viewer")):
+            action = act(view_menu, label, "", lambda checked=False, name=pane:
+                         self._set_current_pane(name, checked))
+            action.setCheckable(True)
+            self.pane_actions[pane] = action
+        self.facts_action = act(view_menu, "Facts", "W",
+                                lambda _checked=False: self.toggle_details())
+        self.facts_action.setCheckable(True)
+        self.focus_action = act(view_menu, "Focus Mode", "Ctrl+Shift+F",
+                                lambda _checked=False: self.toggle_focus())
+        self.focus_action.setCheckable(True)
         act(view_menu, "Fullscreen", "Alt+F", self.toggle_fullscreen)
         view_menu.addSeparator()
-        act(view_menu, "Reset Panel Layout", "", self.reset_layout)
-
-    def _build_toolbar(self) -> None:
-        # The command bar is a floating pane, not a docked toolbar: the picture runs the
-        # full height of the window underneath it.
-        self.command_bar = CommandBar(self, self.shell)
-        holder = QHBoxLayout(self.command_bar)
-        holder.setContentsMargins(6, 3, 6, 3)
-        bar = QToolBar("File and panes", self.command_bar)
-        bar.setObjectName("lighttable-toolbar")
-        bar.setMovable(False)
-        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        holder.addWidget(bar)
-
-        def button(text: str, tooltip: str, fn, shortcut: str = "") -> QAction:
-            action = QAction(text, self)
-            action.setToolTip(tooltip)
-            if shortcut:
-                action.setShortcut(QKeySequence(shortcut))
-            action.triggered.connect(fn)
-            bar.addAction(action)
-            return action
-
-        # Top left, ahead of everything: type to narrow the folder you are looking at.
-        self.search = QLineEdit()
-        self.search.setObjectName("search")
-        self.search.setPlaceholderText("Search this folder…")
-        self.search.setClearButtonEnabled(True)
-        self.search.setFixedWidth(230)
-        self.search.textChanged.connect(self._search_changed)
-        self.search.installEventFilter(self)  # bare-letter keys step aside while typing
-        bar.addWidget(self.search)
-        bar.addSeparator()
-
-        button("＋ Tab", "New tab", lambda: self.new_tab(self.current_tab().folder))
-        bar.addSeparator()
-        button("Quick", "Add the selection to the Quick Collection, or take it out (A)",
-               lambda: self.current_tab().toggle_mark("quick"))
-        button("Flag", "Flag the selection, or unflag it (F)",
-               lambda: self.current_tab().toggle_mark("flagged"))
-        bar.addSeparator()
-        button("Copy", "Copy selected files", lambda: self.current_tab().copy_selection())
-        button("Paste", "Paste files or image", lambda: self.current_tab().paste_clipboard())
-        button("Rename", "Rename selected file", lambda: self.current_tab().rename())
-        button("Copy Path", "Copy full file paths", lambda: self.current_tab().copy_paths())
-        button("Reveal", "Reveal selected file in the file manager", lambda: self.current_tab().reveal())
-        bar.addSeparator()
-
-        self.pane_actions: dict[str, QAction] = {}
-        for pane, label in (
-            ("locations", "Locations"),
-            ("gallery", "Gallery"),
-            ("info", "Facts"),
-        ):
-            action = QAction(label, self)
-            action.setCheckable(True)
-            action.triggered.connect(
-                lambda checked, name=pane: self._set_current_pane(name, checked))
-            bar.addAction(action)
-            self.pane_actions[pane] = action
-        self.focus_action = QAction("Focus", self)
-        self.focus_action.setCheckable(True)
-        self.focus_action.setChecked(True)
-        self.focus_action.triggered.connect(self._set_focus)
-        bar.addAction(self.focus_action)
-        self.lay_out_shell()
-
-    def lay_out_shell(self) -> None:
-        """Tabs at full size, command bar floating on top of them, clear of the edges so
-        it reads as something resting on the picture rather than a band cut out of it."""
-        if not hasattr(self, "command_bar"):
-            return
-        self.tabs.setGeometry(self.shell.rect())
-        margin = CommandBar.MARGIN
-        top = margin + (self.tabs.tabBar().height() if self.tabs.tabBar().isVisible() else 0)
-        height = self.command_bar.sizeHint().height()
-        self.command_bar.setGeometry(margin, top,
-                                     max(0, self.shell.width() - 2 * margin), height)
-        self.command_bar.raise_()
-        self.command_bar.update()
-        # Panels keep out from under the bar — glass over glass is fine to look at, but
-        # not when the thing underneath has the header you grab it by.
-        inset = top + height + margin
-        for index in range(self.tabs.count()):
-            tab = self.tabs.widget(index)
-            if tab.top_inset != inset:
-                tab.top_inset = inset
-                tab.relayout()
+        act(view_menu, "Reset Column Widths", "", self.reset_layout)
 
     def eventFilter(self, watched, event) -> bool:
         """Hand the bare-letter keys to the search box while it has the keyboard, and
@@ -1862,36 +1766,41 @@ class LightTableWindow(QMainWindow):
             typing = event.type() == QEvent.Type.FocusIn
             for action in self.letter_actions:
                 action.setEnabled(not typing)
+            for shortcut in getattr(self, "arrow_keys", ()):
+                shortcut.setEnabled(not typing)
         return super().eventFilter(watched, event)
 
-    def _search_changed(self, text: str) -> None:
-        """Searching is per tab — each tab is its own folder and its own question."""
-        tab = self.current_tab()
-        if tab is None:
-            return
-        tab.set_filter(text)
-        # Results you cannot see are not results: a search opens the Gallery if the
-        # window is in Focus. Clearing the box leaves it open — you asked for it once.
-        if text.strip() and not tab.pane_visible("gallery"):
-            self._set_current_pane("gallery", True)
-            self._sync_pane_actions()
+    @property
+    def search(self):
+        """The search line of whichever tab is in front.
 
-    def _sync_search(self, *args) -> None:
-        """Show the incoming tab's own search, without re-filtering it on the way in."""
+        There is one per tab, because the question is per folder: two tabs are two
+        folders and two different things being looked for in them. Nothing is synced on
+        the way in — each field already holds its own tab's answer."""
         tab = self.current_tab()
-        if tab is None or not hasattr(self, "search"):
+        return tab.search if tab is not None else None
+
+    def _search_changed(self, text: str) -> None:
+        """Results you cannot see are not results: a search opens the Gallery if the
+        window is in Focus. Clearing the box leaves it open — you asked for it once."""
+        tab = self.current_tab()
+        if tab is None or not text.strip() or tab.pane_visible("gallery"):
             return
-        self.search.blockSignals(True)
-        self.search.setText(tab.filter_text)
-        self.search.blockSignals(False)
+        self._set_current_pane("gallery", True)
+        self._sync_pane_actions()
 
     def focus_search(self) -> None:
-        self.search.setFocus(Qt.FocusReason.ShortcutFocusReason)
-        self.search.selectAll()
+        field = self.search
+        if field is None:
+            return
+        field.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        field.selectAll()
 
     def clear_search(self) -> None:
         """Escape out of a search: drop the filter, hand the keyboard back to the picture."""
-        self.search.clear()
+        field = self.search
+        if field is not None:
+            field.clear()
         tab = self.current_tab()
         if tab is not None:
             tab.view.setFocus(Qt.FocusReason.ShortcutFocusReason)
@@ -1902,15 +1811,15 @@ class LightTableWindow(QMainWindow):
             return
         tab.set_pane_visible(pane, visible)
         self.focus_mode = self._is_focused(tab)
-        self.focus_action.blockSignals(True)
-        self.focus_action.setChecked(self.focus_mode)
-        self.focus_action.blockSignals(False)
+        self._sync_pane_actions()
 
     @staticmethod
     def _is_focused(tab: Tab) -> bool:
-        """Focus is not a mode you set, it is a thing that is true: nothing open but the
-        picture. Closing the last panel by hand is therefore the same as pressing Focus."""
-        return not any(tab.pane_visible(pane) for pane in ("locations", "gallery", "info"))
+        """Focus is not a mode you set, it is a thing that is true: the viewer open and
+        nothing beside it. Closing the last column by hand is therefore the same as
+        pressing Focus, and there is no state where the two disagree."""
+        return (tab.pane_visible("viewer")
+                and not any(tab.pane_visible(pane) for pane in ("locations", "gallery")))
 
     def _set_focus(self, on: bool) -> None:
         self.focus_mode = on
@@ -1920,22 +1829,26 @@ class LightTableWindow(QMainWindow):
         self._sync_pane_actions()
 
     def _sync_pane_actions(self, *args) -> None:
+        """Make the buttons say what is true. Every one of them is a statement about the
+        window, so none of them is ever set by hand — they are read back off the tab."""
         if not hasattr(self, "pane_actions"):
             return
         tab = self.current_tab()
         if tab is None:
             return
-        for pane, action in self.pane_actions.items():
-            action.blockSignals(True)
-            action.setChecked(tab.pane_visible(pane))
-            action.blockSignals(False)
-        self.focus_action.blockSignals(True)
-        self.focus_action.setChecked(self._is_focused(tab))
-        self.focus_action.blockSignals(False)
+        for pane, widget in self.pane_actions.items():
+            widget.blockSignals(True)
+            widget.setChecked(tab.pane_visible(pane))
+            widget.blockSignals(False)
+        for widget, state in ((self.facts_action, tab.pane_visible("info")),
+                              (self.focus_action, self._is_focused(tab))):
+            widget.blockSignals(True)
+            widget.setChecked(state)
+            widget.blockSignals(False)
 
     def reset_layout(self) -> None:
-        """Put the panels back where they started, in every tab. The escape hatch for a
-        layout you have dragged somewhere you cannot get it back from."""
+        """Put the columns back to their starting widths, in every tab. Which columns are
+        open is left alone — that is what you are looking at, not how it is proportioned."""
         self.layout_states = {state.name: state for state in DEFAULT_PANELS}
         for index in range(self.tabs.count()):
             tab = self.tabs.widget(index)
@@ -1951,6 +1864,22 @@ class LightTableWindow(QMainWindow):
 
     def _build_keys(self) -> None:
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self._escape)
+        # Left and right are the previous and the next picture, and they are that no
+        # matter which column the keyboard is in. Going through a shoot is the thing this
+        # app is for, and it cannot depend on having clicked the right pane first: the
+        # folder tree gives up its expand/collapse keys, which it can spare, because a
+        # disclosure triangle is one click away and the next frame is not.
+        self.arrow_keys = [
+            QShortcut(QKeySequence(key), self,
+                      activated=lambda step=step: self._step(step))
+            for key, step in (("Left", -1), ("Right", 1),
+                              ("Space", 1), ("Shift+Space", -1))
+        ]
+
+    def _step(self, direction: int) -> None:
+        tab = self.current_tab()
+        if tab is not None:
+            tab.step(direction)
 
     def toggle_details(self) -> None:
         self.details_on = not self.details_on
@@ -1965,19 +1894,13 @@ class LightTableWindow(QMainWindow):
 
     def toggle_fullscreen(self) -> None:
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
-        self._sync_rails()
-
-    def _sync_rails(self) -> None:
-        """Fullscreen means nothing but the picture — even the disclosure gutter goes."""
-        for index in range(self.tabs.count()):
-            self.tabs.widget(index).rail.setVisible(not self.isFullScreen())
 
     def _escape(self) -> None:
-        if self.search.hasFocus() or self.search.text():
+        field = self.search
+        if field is not None and (field.hasFocus() or field.text()):
             self.clear_search()
         elif self.isFullScreen():
             self.showNormal()
-            self._sync_rails()
         elif self.focus_mode:
             self.toggle_focus()
 
