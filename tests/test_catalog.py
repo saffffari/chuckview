@@ -1,7 +1,6 @@
 import csv
 import os
 import shutil
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -187,7 +186,7 @@ class CatalogTests(Temp):
         self.assertEqual(2, len(self.catalog.search("rating:>=4")[0]))
         static = self.catalog.create_collection("baseline")
         self.catalog.add_to_collection(static, ids[:2])
-        smart = self.catalog.create_collection("young DX", "mod:DX age:<18")
+        self.catalog.create_collection("young DX", "mod:DX age:<18")
         names = {name: count for _id, name, _q, count in self.catalog.collections()}
         self.assertEqual({"baseline": 2, "young DX": 3}, names)
         self.assertEqual(2, len(self.catalog.search(source=("collection", static))[0]))

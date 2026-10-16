@@ -1,4 +1,4 @@
-"""Non-GUI core for Light Table: recursive image discovery, the thumbnail cache,
+"""Non-GUI core shared with Light Table: recursive image discovery, the thumbnail cache,
 and the pure helpers behind import/paste and the file-manager verbs."""
 
 from __future__ import annotations
@@ -238,9 +238,7 @@ def trash_command(path: str | os.PathLike, platform: str | None = None) -> list[
     return ["gio", "trash", "--", target]
 
 
-# --- Places: pinned favorites plus whatever is mounted right now -----------------------
-# Favorites persist to one flat, human-readable file — one absolute path per line,
-# `#` comments allowed (Rule 2: settings are a text file, never a database).
+# --- Config, and whatever is mounted right now ---------------------------------------
 # Drives are never stored: they are read off the mount table every time the list is built,
 # so plugging a disk in makes it appear and unplugging it makes it leave.
 
@@ -253,77 +251,6 @@ def config_dir() -> Path:
     if sys.platform.startswith("win") and os.environ.get("APPDATA"):
         return Path(os.environ["APPDATA"]) / "ChuckView"
     return Path.home() / ".config" / "chuckview"
-
-
-def favorites_file() -> Path:
-    return config_dir() / "lighttable-favorites.txt"
-
-
-def default_favorites() -> list[Path]:
-    """What a fresh install pins: home and the usual picture wells that exist."""
-    home = Path.home()
-    candidates = [home, home / "Pictures", home / "Desktop", home / "Downloads"]
-    return [path for path in candidates if path.is_dir()]
-
-
-def _dedupe(paths: Iterable[Path]) -> list[Path]:
-    seen: set[str] = set()
-    ordered: list[Path] = []
-    for path in paths:
-        key = str(path)
-        if key not in seen:
-            seen.add(key)
-            ordered.append(path)
-    return ordered
-
-
-def load_favorites(path: Path | None = None) -> list[Path]:
-    """Read the favorites file. Missing file means a fresh install → the defaults.
-    Entries that do not exist right now are kept (an unplugged drive is still pinned)."""
-    source = Path(path) if path is not None else favorites_file()
-    try:
-        lines = source.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return default_favorites()
-    folders = [
-        Path(stripped).expanduser()
-        for line in lines
-        if (stripped := line.strip()) and not stripped.startswith("#")
-    ]
-    return _dedupe(folders)
-
-
-def save_favorites(folders: Iterable[str | os.PathLike], path: Path | None = None) -> Path:
-    """Write the favorites file, one absolute path per line, with a header comment."""
-    target = Path(path) if path is not None else favorites_file()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    ordered = _dedupe(Path(folder).expanduser() for folder in folders)
-    body = "\n".join(str(folder) for folder in ordered)
-    target.write_text(
-        "# Light Table favorites — one folder per line. Edit freely.\n" + body + "\n",
-        encoding="utf-8",
-    )
-    return target
-
-
-def add_favorite(folder: str | os.PathLike, path: Path | None = None) -> list[Path]:
-    """Pin a folder (no-op if already pinned). Returns the new favorites list."""
-    folders = load_favorites(path)
-    wanted = Path(folder).expanduser()
-    if wanted not in folders:
-        folders.append(wanted)
-        save_favorites(folders, path)
-    return folders
-
-
-def remove_favorite(folder: str | os.PathLike, path: Path | None = None) -> list[Path]:
-    """Unpin a folder (no-op if it was not pinned). Returns the new favorites list."""
-    folders = load_favorites(path)
-    wanted = Path(folder).expanduser()
-    remaining = [f for f in folders if f != wanted]
-    if len(remaining) != len(folders):
-        save_favorites(remaining, path)
-    return remaining
 
 
 def _drive_search_roots(platform: str, user: str) -> list[Path]:
@@ -396,93 +323,3 @@ def tree_anchor(folder: str | os.PathLike, mounts: Iterable[str | os.PathLike] |
     return Path(target.anchor or "/")
 
 
-# --- Marks: the quick collection and the flagged set -----------------------------------
-# Two sets of pictures that live outside any folder. The quick collection is the shelf you
-# sweep things onto while you look (A); flags are the keepers you mark on the way past (F).
-# Both are the same thing underneath — an ordered list of absolute paths — and both are
-# stored the way favorites are: one flat text file each, one path per line, editable by
-# hand (Rule 2). Marking an image never moves it, copies it, or writes to it: files are
-# files, and a mark is a note we keep about one, not a change to it.
-
-COLLECTIONS: dict[str, tuple[str, str]] = {
-    "quick": ("Quick Collection", "lighttable-quick.txt"),
-    "flagged": ("Flagged", "lighttable-flags.txt"),
-}
-
-
-def collection_title(name: str) -> str:
-    """What this set is called on screen."""
-    return COLLECTIONS[name][0]
-
-
-def collection_file(name: str) -> Path:
-    return config_dir() / COLLECTIONS[name][1]
-
-
-def load_collection(name: str, path: Path | None = None) -> list[Path]:
-    """Read one set, in the order it was built. Missing file means an empty set — a mark
-    you have never made is not an error. Paths that no longer exist stay in the file: an
-    unplugged drive has not un-flagged anything."""
-    source = Path(path) if path is not None else collection_file(name)
-    try:
-        lines = source.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
-    return _dedupe(
-        Path(stripped).expanduser()
-        for line in lines
-        if (stripped := line.strip()) and not stripped.startswith("#")
-    )
-
-
-def save_collection(name: str, paths: Iterable[str | os.PathLike],
-                    path: Path | None = None) -> Path:
-    """Write one set back, one absolute path per line, with a header you can read."""
-    target = Path(path) if path is not None else collection_file(name)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    ordered = _dedupe(Path(item).expanduser() for item in paths)
-    body = "\n".join(str(item) for item in ordered)
-    target.write_text(
-        f"# Light Table — {collection_title(name)}. One image per line. Edit freely.\n"
-        + body + ("\n" if body else ""),
-        encoding="utf-8",
-    )
-    return target
-
-
-def toggle_collection(name: str, images: Iterable[str | os.PathLike],
-                      path: Path | None = None) -> tuple[list[Path], bool]:
-    """Put a selection in the set, or take it out — the whole point of one key doing both.
-
-    A mixed selection goes *in*: with some of the frames in the set and some out, the
-    thing you meant by pressing the key was "all of these", not "undo half of them".
-    Returns the new set and whether it added."""
-    current = load_collection(name, path)
-    wanted = _dedupe(Path(image).expanduser() for image in images)
-    if not wanted:
-        return current, False
-    present = set(map(str, current))
-    adding = any(str(image) not in present for image in wanted)
-    if adding:
-        updated = current + [image for image in wanted if str(image) not in present]
-    else:
-        drop = set(map(str, wanted))
-        updated = [image for image in current if str(image) not in drop]
-    save_collection(name, updated, path)
-    return updated, adding
-
-
-def collection_members(name: str, path: Path | None = None) -> list[str]:
-    """The set as the contact sheet should show it: the files that are actually there
-    right now, still in the order they were added — the one order in the app that is
-    yours rather than the disk's."""
-    return [str(item) for item in load_collection(name, path) if item.is_file()]
-
-
-def load_marks() -> dict[str, set[str]]:
-    """Every set at once, as membership tests.
-
-    The contact sheet asks "is this one marked?" once per thumbnail, thousands of times
-    in a big folder, so it holds the answer to that question rather than the files: two
-    reads when something changes, none while you scroll."""
-    return {name: {str(item) for item in load_collection(name)} for name in COLLECTIONS}

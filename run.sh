@@ -2,10 +2,8 @@
 set -eu
 root="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$root"
-# Prefer the app's user-owned runtime when installed; keep source checkouts usable
-# with their existing Python environment on other machines.
-runtime="${XDG_DATA_HOME:-$HOME/.local/share}/2photon/lighttable-venv/bin/python"
-if [ -x "$runtime" ]; then
-    exec "$runtime" -m lighttable.app "$@"
+# Prefer the checkout's own .venv; keep plain checkouts usable with python3.
+if [ -x "$root/.venv/bin/python" ]; then
+    exec "$root/.venv/bin/python" -m chuckview "$@"
 fi
-exec python3 -m lighttable.app "$@"
+exec python3 -m chuckview "$@"
