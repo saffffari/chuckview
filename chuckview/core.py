@@ -172,10 +172,14 @@ def filter_paths(paths: Iterable[str], query: str, root: str | os.PathLike | Non
     terms = query.lower().split()
     if not terms:
         return list(paths)
-    prefix = f"{os.fspath(root).rstrip(os.sep)}{os.sep}" if root is not None else ""
+    # Windows paths arrive with either separator (Qt hands back "/", os.scandir "\"), so the
+    # folder on screen is matched both ways.
+    base = os.fspath(root).rstrip("/\\") if root is not None else ""
+    prefixes = tuple({f"{base}{sep}" for sep in (os.sep, "/")}) if root is not None else ()
     kept = []
     for path in paths:
-        subject = path[len(prefix):] if prefix and path.startswith(prefix) else os.path.basename(path)
+        prefix = next((p for p in prefixes if path.startswith(p)), "")
+        subject = path[len(prefix):] if prefix else os.path.basename(path)
         subject = subject.lower()
         if extra and path in extra:
             subject = f"{subject} {extra[path]}"
@@ -199,7 +203,7 @@ def reveal_command(path: str | os.PathLike, platform: str | None = None) -> list
     platform = platform if platform is not None else sys.platform
     target = Path(path)
     if platform == "darwin":
-        return ["open", "-R", str(target)]
+        return ["open", "-R", os.fspath(path)]
     if platform.startswith("win"):
         return ["explorer", f"/select,{target}"]
     # Linux/*nix: the freedesktop FileManager1 D-Bus call highlights the file.

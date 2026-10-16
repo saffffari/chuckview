@@ -207,7 +207,8 @@ class DriveTests(unittest.TestCase):
                 (Path(tmp) / name).mkdir()
             (Path(tmp) / ".hidden").mkdir()
             (Path(tmp) / "notes.txt").touch()
-            ismount, stat = self._as_mounts({f"{tmp}/citadel": 1, f"{tmp}/board_rack": 2})
+            ismount, stat = self._as_mounts({str(Path(tmp) / "citadel"): 1,
+                                            str(Path(tmp) / "board_rack"): 2})
             with ismount, stat:
                 found = mounted_drives(roots=[Path(tmp), Path(tmp) / "nonexistent"])
             self.assertEqual(["board_rack", "citadel"], [label for label, _p in found])
@@ -222,7 +223,8 @@ class DriveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as run, tempfile.TemporaryDirectory() as mnt:
             (Path(run) / "citadel").mkdir()
             (Path(mnt) / "citadel").mkdir()
-            ismount, stat = self._as_mounts({f"{run}/citadel": 7, f"{mnt}/citadel": 7})
+            ismount, stat = self._as_mounts({str(Path(run) / "citadel"): 7,
+                                            str(Path(mnt) / "citadel"): 7})
             with ismount, stat:
                 found = mounted_drives(roots=[Path(run), Path(mnt)])
             self.assertEqual([(("citadel"), Path(run) / "citadel")], found)
