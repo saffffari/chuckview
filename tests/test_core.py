@@ -132,7 +132,7 @@ class PastedNameTests(unittest.TestCase):
 class FileManagerVerbTests(unittest.TestCase):
     def test_reveal_selects_the_file_per_os(self) -> None:
         self.assertEqual(["open", "-R", "/a/b.png"], reveal_command("/a/b.png", "darwin"))
-        self.assertEqual(["explorer", "/select,/a/b.png"], reveal_command("/a/b.png", "win32"))
+        self.assertEqual(["explorer", "/select,\\a\\b.png"], reveal_command("/a/b.png", "win32"))
         linux = reveal_command("/a/b.png", "linux")
         self.assertEqual("dbus-send", linux[0])
         self.assertIn("org.freedesktop.FileManager1.ShowItems", linux)

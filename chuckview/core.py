@@ -205,7 +205,9 @@ def reveal_command(path: str | os.PathLike, platform: str | None = None) -> list
     if platform == "darwin":
         return ["open", "-R", os.fspath(path)]
     if platform.startswith("win"):
-        return ["explorer", f"/select,{target}"]
+        import ntpath  # Explorer only understands backslashes, whatever built the path
+
+        return ["explorer", f"/select,{ntpath.normpath(os.fspath(path))}"]
     # Linux/*nix: the freedesktop FileManager1 D-Bus call highlights the file.
     try:
         uri = target.resolve().as_uri()
