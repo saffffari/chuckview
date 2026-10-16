@@ -1,2 +1,4 @@
 numpy>=2.0,<3
 PyQt6>=6.7,<7
+pydicom>=3.0,<4
+pylibjpeg[all]>=2.0

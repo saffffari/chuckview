@@ -18,13 +18,32 @@ IMAGE_EXTS = {
     ".avif", ".heic", ".dds", ".psd",
 }
 
+# DICOM is recognised by sniffing as well as by name (see dicom.py), so it is not here.
+from lighttable import dicom  # noqa: E402
+
 DEFAULT_LIMIT = 50_000
 THUMB_SIZE = 256
 
 
 def cache_dir() -> Path:
-    root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    """Thumbnails and DICOM headers. XDG on Linux, %LOCALAPPDATA% on Windows — a cache is
+    machine-local, so it must not roam with a Windows profile."""
+    if "XDG_CACHE_HOME" in os.environ:
+        root = Path(os.environ["XDG_CACHE_HOME"])
+    elif sys.platform.startswith("win") and os.environ.get("LOCALAPPDATA"):
+        root = Path(os.environ["LOCALAPPDATA"])
+    else:
+        root = Path.home() / ".cache"
     return root / "2photon" / "lighttable"
+
+
+def _wanted(name: str, path: str) -> bool:
+    """Whether a file in a scan is a picture: a known extension, or a DICOM file — which may
+    have no extension at all, so names that could be DICOM are sniffed."""
+    ext = os.path.splitext(name)[1].lower()
+    if ext in IMAGE_EXTS:
+        return True
+    return dicom.AVAILABLE and dicom.might_be_dicom_name(name) and dicom.sniff(path)
 
 
 def scan_images(root: Path, limit: int = DEFAULT_LIMIT) -> list[tuple[float, str]]:
@@ -41,7 +60,7 @@ def scan_images(root: Path, limit: int = DEFAULT_LIMIT) -> list[tuple[float, str
                     try:
                         if entry.is_dir(follow_symlinks=False):
                             stack.append(entry.path)
-                        elif os.path.splitext(entry.name)[1].lower() in IMAGE_EXTS:
+                        elif _wanted(entry.name, entry.path):
                             found.append((entry.stat(follow_symlinks=False).st_mtime, entry.path))
                             if len(found) >= limit:
                                 break
@@ -74,7 +93,8 @@ def thumb_path_for(path: str) -> Path | None:
 
 
 def is_image_path(path: str | os.PathLike) -> bool:
-    return Path(path).suffix.lower() in IMAGE_EXTS
+    suffix = Path(path).suffix.lower()
+    return suffix in IMAGE_EXTS or (dicom.AVAILABLE and suffix in dicom.DICOM_EXTS)
 
 
 def unique_destination(folder: Path, name: str, reserved: Iterable[Path] = ()) -> Path:
@@ -135,7 +155,8 @@ def plan_import(sources: Iterable[str | os.PathLike], folder: Path) -> DropPlan:
     return DropPlan(tuple(copies), tuple(existing))
 
 
-def filter_paths(paths: Iterable[str], query: str, root: str | os.PathLike | None = None) -> list[str]:
+def filter_paths(paths: Iterable[str], query: str, root: str | os.PathLike | None = None,
+                 extra: dict[str, str] | None = None) -> list[str]:
     """Narrow a scanned folder to the images matching every word of the query,
     case-insensitively and in any order — so "red car" finds `car_red_04.png`.
 
@@ -143,6 +164,9 @@ def filter_paths(paths: Iterable[str], query: str, root: str | os.PathLike | Non
     over the path *below the folder on screen*, which makes "apollo" find everything in
     `apollo_11_retro/` as well as `apollo.png`. Nothing above that folder counts, or
     every image would match the name of the folder you are already in.
+
+    `extra` adds words a path does not carry — a DICOM series' modality and description —
+    so "ct" finds the CTs in a folder of files all called `artifact.dcm`.
 
     An empty query is not a filter: it returns everything, in order."""
     terms = query.lower().split()
@@ -153,6 +177,8 @@ def filter_paths(paths: Iterable[str], query: str, root: str | os.PathLike | Non
     for path in paths:
         subject = path[len(prefix):] if prefix and path.startswith(prefix) else os.path.basename(path)
         subject = subject.lower()
+        if extra and path in extra:
+            subject = f"{subject} {extra[path]}"
         if all(term in subject for term in terms):
             kept.append(path)
     return kept
@@ -221,8 +247,12 @@ def trash_command(path: str | os.PathLike, platform: str | None = None) -> list[
 
 def config_dir() -> Path:
     """Suite config root. TWOPHOTON_CONFIG_HOME overrides it for tests."""
-    base = os.environ.get("TWOPHOTON_CONFIG_HOME") or str(Path.home() / ".config" / "2photon")
-    return Path(base)
+    base = os.environ.get("TWOPHOTON_CONFIG_HOME")
+    if base:
+        return Path(base)
+    if sys.platform.startswith("win") and os.environ.get("APPDATA"):
+        return Path(os.environ["APPDATA"]) / "2photon"
+    return Path.home() / ".config" / "2photon"
 
 
 def favorites_file() -> Path:

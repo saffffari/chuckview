@@ -51,8 +51,11 @@ LABEL = "#9a9a9a"      # small-capital keys — the left column of a readout, a 
 # Every letter of chrome in the app is monospaced small capitals, which is what makes a
 # readout a readout: keys line up, values line up, and a path does not reflow when a digit
 # changes. File names are chrome too here — they are data you scan, not prose you read.
-MONO = "'JetBrains Mono', 'JetBrains Mono NL', 'DejaVu Sans Mono', monospace"
-MONO_FAMILIES = ("JetBrains Mono", "JetBrains Mono NL", "DejaVu Sans Mono", "Monospace")
+# Cascadia Mono and Consolas are the Windows fallbacks: every Windows 10+ install has one.
+MONO = ("'JetBrains Mono', 'JetBrains Mono NL', 'DejaVu Sans Mono', 'Cascadia Mono', "
+        "Consolas, monospace")
+MONO_FAMILIES = ("JetBrains Mono", "JetBrains Mono NL", "DejaVu Sans Mono", "Cascadia Mono",
+                 "Consolas", "Monospace")
 
 HEADER = 19            # height of a column's label strip, rule included
 ROW = 15               # height of one readout row, rule included
