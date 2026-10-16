@@ -1,4 +1,4 @@
-"""DICOM for Light Table: find it, group it, and decode only the slice you are looking at.
+"""DICOM for ChuckView: find it, group it, and decode only the slice you are looking at.
 
 Medical images arrive in two shapes and the app shows both as one frame on the sheet:
 
@@ -201,6 +201,11 @@ def read_header(path: str | os.PathLike) -> Header | None:
                              force=os.path.splitext(name)[1].lower() in DICOM_EXTS)
     except Exception:  # noqa: BLE001 - a malformed file is just not a picture
         return None
+    return header_from_dataset(ds, name)
+
+
+def header_from_dataset(ds, name: str) -> Header | None:
+    """The viewer's Header out of an already-parsed dataset."""
     rows, cols = _first(ds.get("Rows"), int) or 0, _first(ds.get("Columns"), int) or 0
     if not rows or not cols:
         return None
@@ -229,6 +234,105 @@ def read_header(path: str | os.PathLike) -> Header | None:
         intercept=_first(ds.get("RescaleIntercept")) or 0.0,
         samples=_first(ds.get("SamplesPerPixel"), int) or 1,
     )
+
+
+# Tags a research catalog indexes and filters on. None of them names, numbers, addresses
+# or dates a patient; the ones needed to *group* by patient (ID and issuer) and to work out
+# an age are read separately, used in memory, and dropped.
+RESEARCH_TAGS = [
+    "StudyDescription", "ProtocolName", "ViewPosition", "ImageLaterality", "Laterality",
+    "Manufacturer", "ManufacturerModelName", "KVP", "ConvolutionKernel",
+    "ContrastBolusAgent", "ImageType", "PatientSex", "PatientAge", "StudyDate",
+    "SOPInstanceUID", "BitsStored",
+]
+_IDENTITY_TAGS = ["PatientID", "IssuerOfPatientID", "PatientBirthDate"]
+
+
+def _text(ds, keyword: str) -> str:
+    value = ds.get(keyword, "")
+    if value is None:
+        return ""
+    if type(value).__name__ == "MultiValue" or isinstance(value, (list, tuple)):
+        return "\\".join(str(v) for v in value).strip()
+    return str(value).strip()
+
+
+def _age_years(ds) -> int | None:
+    """Age in whole years, from PatientAge (`045Y`, `018M`) or, failing that, birth year
+    against study year. Capped at 90, because HIPAA Safe Harbor folds every older age into
+    one bucket — a 97-year-old in a small cohort is an identifier."""
+    raw = _text(ds, "PatientAge").upper()
+    years = None
+    if len(raw) >= 2 and raw[:-1].isdigit():
+        number, unit = int(raw[:-1]), raw[-1]
+        years = {"Y": number, "M": number // 12, "W": number // 52,
+                 "D": number // 365}.get(unit)
+    if years is None:
+        birth, study = _text(ds, "PatientBirthDate")[:4], _text(ds, "StudyDate")[:4]
+        if birth.isdigit() and study.isdigit():
+            years = int(study) - int(birth)
+    if years is None or years < 0:
+        return None
+    return min(years, 90)
+
+
+def research_fields(ds, secret: bytes | None) -> dict[str, object]:
+    """The non-identifying facts a dataset is selected by, plus a keyed patient hash.
+
+    The hash is HMAC-SHA256 over PatientID and its issuer, keyed by a secret that lives in
+    one catalog and nowhere else. It lets the catalog say "these twelve films are the same
+    person" — which a leakage-free train/test split needs — without the catalog holding an
+    MRN, and without the hash being reversible by trying every MRN, which an unkeyed hash
+    of a seven-digit number would be."""
+    import hashlib
+    import hmac
+
+    year = _text(ds, "StudyDate")[:4]
+    patient = ""
+    identity = _text(ds, "PatientID")
+    if identity and secret:
+        message = f"{identity}|{_text(ds, 'IssuerOfPatientID')}".encode("utf-8")
+        patient = hmac.new(secret, message, hashlib.sha256).hexdigest()[:20]
+    return {
+        "study_description": _text(ds, "StudyDescription"),
+        "protocol": _text(ds, "ProtocolName"),
+        "view": _text(ds, "ViewPosition").upper(),
+        "laterality": (_text(ds, "ImageLaterality") or _text(ds, "Laterality")).upper(),
+        "manufacturer": _text(ds, "Manufacturer"),
+        "model": _text(ds, "ManufacturerModelName"),
+        "kvp": _first(ds.get("KVP")),
+        "kernel": _text(ds, "ConvolutionKernel"),
+        "contrast": _text(ds, "ContrastBolusAgent"),
+        "image_type": _text(ds, "ImageType").upper(),
+        "sex": _text(ds, "PatientSex").upper()[:1],
+        "age": _age_years(ds),
+        "year": int(year) if year.isdigit() else None,
+        "sop_uid": _text(ds, "SOPInstanceUID"),
+        "bits": _first(ds.get("BitsStored"), int),
+        "patient": patient,
+    }
+
+
+def read_for_catalog(path: str, secret: bytes | None
+                     ) -> tuple[Header, dict[str, object]] | None:
+    """One parse of one file at import: the viewer's header and the research fields."""
+    if not AVAILABLE:
+        return None
+    try:
+        ds = pydicom.dcmread(path, stop_before_pixels=True,
+                             specific_tags=_HEADER_TAGS + RESEARCH_TAGS + _IDENTITY_TAGS,
+                             force=os.path.splitext(path)[1].lower() in DICOM_EXTS)
+    except Exception:  # noqa: BLE001
+        return None
+    header = header_from_dataset(ds, path)
+    if header is None:
+        return None
+    fields = research_fields(ds, secret)
+    try:
+        fields["transfer"] = str(ds.file_meta.TransferSyntaxUID.name)
+    except AttributeError:
+        fields["transfer"] = ""
+    return header, fields
 
 
 def _header_to_row(header: Header) -> str:

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#000"/>
+  <rect x="20.5" y="20.5" width="215" height="215" fill="none" stroke="#3c3c3c" stroke-width="1"/>
+  <!-- a stack of slices, seen edge-on: the one on screen is the bright one -->
+  <g stroke="#6e6e6e" stroke-width="6" stroke-linecap="square">
+    <line x1="64" y1="86" x2="192" y2="86"/>
+    <line x1="64" y1="106" x2="192" y2="106"/>
+    <line x1="64" y1="150" x2="192" y2="150"/>
+    <line x1="64" y1="170" x2="192" y2="170"/>
+  </g>
+  <line x1="52" y1="128" x2="204" y2="128" stroke="#f2f2f2" stroke-width="10" stroke-linecap="square"/>
+  <text x="128" y="218" fill="#9a9a9a" font-family="monospace" font-size="26" text-anchor="middle" letter-spacing="6">CV</text>
+</svg>
