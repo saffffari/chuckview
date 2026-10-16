@@ -44,7 +44,7 @@ switches are checkmarks — which is the only thing the buttons were really carr
 
 ## The material — black, white, and a hairline
 
-Light Table is made of what [PC-6](../../../PC-6) is made of, for the same reason: a readout should
+Light Table is made of what PC-6 is made of, for the same reason: a readout should
 look etched into the panel, not like a card lying on one.
 
 - **One ground.** Every surface in the app is the same black, the matting included. The photograph
@@ -162,6 +162,16 @@ The chrome costs nothing to draw: it is flat fill and a stylesheet, with no per-
 nothing sampling the picture, so the viewport scrolls its own backing store and repaints only the
 sliver that moved. Membership in the two sets of marks is held as a pair of sets rather than
 re-read per thumbnail, so scrolling a large folder never touches them.
+
+## Running from source
+
+```bash
+./run.sh [image-or-folder]
+PYTHONDONTWRITEBYTECODE=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -t .
+```
+
+Split out of the 2Photon `elements` repo (`apps/lighttable`) with its history on 2026-10-16.
+GPLv3 — see LICENSE.
 
 ## Default app
 

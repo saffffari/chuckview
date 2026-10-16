@@ -14,10 +14,10 @@ import numpy as np  # noqa: E402
 from PyQt6.QtCore import QEvent, QPoint, QRect, QThreadPool  # noqa: E402
 from PyQt6.QtWidgets import QMenu, QWidget  # noqa: E402
 
-from apps.lighttable import panels  # noqa: E402
-from apps.lighttable.app import COLUMNS, DEFAULT_PANELS  # noqa: E402
-from apps.lighttable.panels import PanelState  # noqa: E402
-from apps.lighttable.core import (  # noqa: E402
+from lighttable import panels  # noqa: E402
+from lighttable.app import COLUMNS, DEFAULT_PANELS  # noqa: E402
+from lighttable.panels import PanelState  # noqa: E402
+from lighttable.core import (  # noqa: E402
     IMAGE_EXTS,
     add_favorite,
     collection_file,
@@ -255,9 +255,9 @@ class DriveTests(unittest.TestCase):
         """Pretend the given paths are mount points on the given devices. Temp dirs all
         share one filesystem, so both facts have to be faked to test the real rules."""
         return (
-            mock.patch("apps.lighttable.core.os.path.ismount",
+            mock.patch("lighttable.core.os.path.ismount",
                        side_effect=lambda path: str(path) in devices),
-            mock.patch("apps.lighttable.core.os.stat",
+            mock.patch("lighttable.core.os.stat",
                        side_effect=lambda path: self._Stat(devices[str(path)])),
         )
 
@@ -315,7 +315,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
         from PyQt6.QtCore import QThreadPool
         from PyQt6.QtGui import QImage
 
-        from apps.lighttable.app import LightTableWindow, load_frames
+        from lighttable.app import LightTableWindow, load_frames
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
                 tempfile.TemporaryDirectory() as config:
@@ -388,7 +388,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
         filters, and it belongs to its tab — two tabs are two questions."""
         from PyQt6.QtWidgets import QAbstractButton
 
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
                 tempfile.TemporaryDirectory() as config:
@@ -419,7 +419,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                 window.close()
 
     def test_the_pane_buttons_open_and_close_each_column(self) -> None:
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
                 tempfile.TemporaryDirectory() as config:
@@ -460,7 +460,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
         return None
 
     def test_places_lists_favorites_then_drives_and_pins(self) -> None:
-        from apps.lighttable.app import FAVORITE_ROLE, PATH_ROLE, LightTableWindow
+        from lighttable.app import FAVORITE_ROLE, PATH_ROLE, LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
                 tempfile.TemporaryDirectory() as config:
@@ -497,7 +497,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
     def test_search_narrows_the_sheet_and_opens_the_gallery(self) -> None:
         from PyQt6.QtGui import QImage
 
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
                 tempfile.TemporaryDirectory() as config:
@@ -548,7 +548,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
         from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
         from PyQt6.QtGui import QImage, QKeyEvent, QWheelEvent
 
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
                 tempfile.TemporaryDirectory() as config:
@@ -596,7 +596,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
     def test_viewport_drag_carries_the_file_and_the_bitmap(self) -> None:
         from PyQt6.QtGui import QImage
 
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
                 tempfile.TemporaryDirectory() as config:
@@ -629,7 +629,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
                         carried["exec"] = action
                         return action
 
-                with mock.patch("apps.lighttable.app.QDrag", FakeDrag):
+                with mock.patch("lighttable.app.QDrag", FakeDrag):
                     view.drag_out()
                 mime = carried["mime"]
                 self.assertEqual([str(shot)], [u.toLocalFile() for u in mime.urls()])
@@ -638,7 +638,7 @@ class LightTableWindowSmokeTests(unittest.TestCase):
 
                 view.source_path = str(Path(tmp) / "gone.png")
                 carried.clear()
-                with mock.patch("apps.lighttable.app.QDrag", FakeDrag):
+                with mock.patch("lighttable.app.QDrag", FakeDrag):
                     view.drag_out()  # nothing to carry, nothing happens
                 self.assertEqual({}, carried)
                 from PyQt6.QtCore import QThreadPool as Pool
@@ -809,7 +809,7 @@ class MarkingSmokeTests(unittest.TestCase):
         """A window over `count` images in a throwaway folder, cache and config."""
         from PyQt6.QtGui import QImage
 
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         tmp = stack.enter_context(tempfile.TemporaryDirectory())
         cache = stack.enter_context(tempfile.TemporaryDirectory())
@@ -825,7 +825,7 @@ class MarkingSmokeTests(unittest.TestCase):
         return window, Path(tmp)
 
     def test_a_and_f_mark_the_selection_both_ways(self) -> None:
-        from apps.lighttable.app import MARKS_ROLE
+        from lighttable.app import MARKS_ROLE
 
         with contextlib.ExitStack() as stack:
             window, folder = self.build(stack)
@@ -880,7 +880,7 @@ class MarkingSmokeTests(unittest.TestCase):
             QThreadPool.globalInstance().waitForDone(5000)
 
     def test_a_set_opens_in_the_sheet_like_a_folder(self) -> None:
-        from apps.lighttable.app import COLLECTION_ROLE
+        from lighttable.app import COLLECTION_ROLE
 
         with contextlib.ExitStack() as stack:
             window, folder = self.build(stack)
@@ -972,7 +972,7 @@ class ColumnSmokeTests(unittest.TestCase):
 
     @contextlib.contextmanager
     def window(self, folder=None):
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         with contextlib.ExitStack() as stack:
             tmp = stack.enter_context(tempfile.TemporaryDirectory())
@@ -1010,7 +1010,7 @@ class ColumnSmokeTests(unittest.TestCase):
             self.assertLess(boxes[1].right(), boxes[2].left())
 
     def test_the_columns_can_be_sized_and_the_widths_are_kept(self) -> None:
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         with self.window() as (window, tmp):
             tab = window.current_tab()
@@ -1047,7 +1047,7 @@ class ColumnSmokeTests(unittest.TestCase):
     def test_a_picture_opens_in_focus_and_a_folder_does_not(self) -> None:
         from PyQt6.QtGui import QImage
 
-        from apps.lighttable.app import LightTableWindow
+        from lighttable.app import LightTableWindow
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cache, \
                 tempfile.TemporaryDirectory() as config:

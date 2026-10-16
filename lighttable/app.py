@@ -69,15 +69,15 @@ from PyQt6.QtWidgets import (
     QTreeView, QVBoxLayout, QWidget,
 )
 
-from apps.common import HOUSE_STYLE, INK, SELECT, configure_application
-from apps.lighttable.core import (
+from lighttable.common import HOUSE_STYLE, INK, SELECT, configure_application
+from lighttable.core import (
     COLLECTIONS, THUMB_SIZE, add_favorite, cache_dir, collection_members,
     collection_title, filter_paths, is_image_path, load_collection, load_favorites,
     load_marks, mounted_drives, open_path_command, pasted_image_name, plan_import,
     remove_favorite, reveal_command, save_collection, scan_images, thumb_path_for,
     toggle_collection, trash_command, tree_anchor, unique_destination,
 )
-from apps.lighttable.panels import (
+from lighttable.panels import (
     EDGE, GUTTER, LABEL, MATTE, MONO, MUTED, PAD, RULE,
     STYLE as PANEL_STYLE, VOID, ColumnHead, Panel, PanelState, Readout,
     column_sizes, load_layout, mono_font, save_layout,

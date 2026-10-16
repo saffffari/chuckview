@@ -34,7 +34,7 @@ from PyQt6.QtCore import QRect, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PyQt6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
-from apps.lighttable.core import config_dir
+from lighttable.core import config_dir
 
 # --- The material ---------------------------------------------------------------------
 # One ground, one ink, one rule. The picture is the only bright thing on screen and the
