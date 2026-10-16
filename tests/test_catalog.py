@@ -211,6 +211,24 @@ class CatalogTests(Temp):
         self.assertEqual(5, self.catalog.relocate_root(root_id, str(moved)))
         self.assertTrue(Path(self.catalog.files(1)[0]).exists())
 
+    def test_previews_render_beside_the_catalog(self):
+        from PyQt6.QtGui import QImage
+
+        from chuckview.previews import PreviewStore
+
+        self.imported()
+        store = PreviewStore(self.catalog.data_dir)
+        for row in self.catalog.search()[0]:
+            item = self.catalog.viewer_item(row.id)
+            self.assertTrue(store.build(row.id, item, row.path), row.badge)
+            self.assertTrue(store.has(row.id))
+        ct = self.catalog.search("is:series")[0][0]
+        preview = QImage(str(store.preview_path(ct.id)))
+        self.assertEqual((32, 32), (preview.width(), preview.height()))
+        film = self.catalog.search("view:AP")[0][0]
+        thumb = QImage(str(store.thumb_path(film.id)))
+        self.assertEqual(64, thumb.height())  # small originals are not blown up
+
     def test_manifest_splits_by_patient(self):
         self.imported()
         ids = [r.id for r in self.catalog.search()[0]]

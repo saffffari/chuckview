@@ -493,6 +493,9 @@ class Catalog:
             return "i.import_id = ?", [last or -1]
         if kind == "root":
             return "i.root_id = ?", [ident]
+        if kind == "query":  # a fixed search the sidebar offers (Picks, Offline)
+            compiled = compile_query(str(ident))
+            return compiled.where, compiled.params
         if kind == "folder":  # (root_id, rel prefix) packed as "root_id:prefix"
             root_id, _, prefix = str(ident).partition(":")
             return ("i.root_id = ? AND (i.rel LIKE ? ESCAPE '\\')",
@@ -570,6 +573,27 @@ class Catalog:
                     label=row["label"] or "", missing=bool(row["missing"]),
                     tagged=bool(row["tagged"]), noted=bool(row["noted"]))
                 for row in rows], compiled
+
+    def rows(self, ids: Iterable[int]) -> list[Row]:
+        """Fresh grid rows for these items — after a mark, so only those cells redraw."""
+        ids = [int(i) for i in ids]
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
+        sql = f"i.id IN ({marks})"
+        rows = self.db.execute(
+            "SELECT i.id, i.rel, r.path AS root, i.kind, i.modality, i.frames, i.rating, "
+            "i.flag, i.label, i.missing, "
+            "EXISTS (SELECT 1 FROM item_tags t WHERE t.item_id = i.id) AS tagged, "
+            "EXISTS (SELECT 1 FROM notes n WHERE n.item_id = i.id) AS noted "
+            f"FROM items i JOIN roots r ON r.id = i.root_id WHERE {sql}", ids).fetchall()
+        return [Row(id=row["id"],
+                    path=os.path.join(row["root"], *PurePosixPath(row["rel"]).parts),
+                    kind=row["kind"] or "", modality=row["modality"] or "",
+                    frames=row["frames"] or 1, rating=row["rating"] or 0, flag=row["flag"] or 0,
+                    label=row["label"] or "", missing=bool(row["missing"]),
+                    tagged=bool(row["tagged"]), noted=bool(row["noted"]))
+                for row in rows]
 
     def facet(self, name: str, query: str = "", source=None, facets=None,
               limit: int = 200) -> list[tuple[object, int]]:
