@@ -19,7 +19,7 @@ IMAGE_EXTS = {
 }
 
 # DICOM is recognised by sniffing as well as by name (see dicom.py), so it is not here.
-from lighttable import dicom  # noqa: E402
+from chuckview import dicom  # noqa: E402
 
 DEFAULT_LIMIT = 50_000
 THUMB_SIZE = 256
@@ -34,7 +34,7 @@ def cache_dir() -> Path:
         root = Path(os.environ["LOCALAPPDATA"])
     else:
         root = Path.home() / ".cache"
-    return root / "2photon" / "lighttable"
+    return root / "chuckview"
 
 
 def _wanted(name: str, path: str) -> bool:
@@ -246,13 +246,13 @@ def trash_command(path: str | os.PathLike, platform: str | None = None) -> list[
 
 
 def config_dir() -> Path:
-    """Suite config root. TWOPHOTON_CONFIG_HOME overrides it for tests."""
-    base = os.environ.get("TWOPHOTON_CONFIG_HOME")
+    """Suite config root. CHUCKVIEW_CONFIG_HOME overrides it for tests."""
+    base = os.environ.get("CHUCKVIEW_CONFIG_HOME")
     if base:
         return Path(base)
     if sys.platform.startswith("win") and os.environ.get("APPDATA"):
-        return Path(os.environ["APPDATA"]) / "2photon"
-    return Path.home() / ".config" / "2photon"
+        return Path(os.environ["APPDATA"]) / "ChuckView"
+    return Path.home() / ".config" / "chuckview"
 
 
 def favorites_file() -> Path:

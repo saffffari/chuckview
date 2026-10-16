@@ -14,8 +14,8 @@ from PyQt6.QtCore import QObject, QRect, QRunnable, Qt, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
-from lighttable.dicom import SliceSource
-from lighttable.panels import INK, LABEL, MUTED, PAD, ROW, RULE, VOID, mono_font
+from chuckview.dicom import SliceSource
+from chuckview.panels import INK, LABEL, MUTED, PAD, ROW, RULE, VOID, mono_font
 
 # Frames this big are never decoded on the UI thread: an EOS film is ~9 megapixels of
 # JPEG-lossless and takes a quarter of a second to decode on a fast machine, several on a

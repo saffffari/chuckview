@@ -244,7 +244,7 @@ def _header_from_row(text: str) -> Header:
 
 
 def header_cache_file() -> Path:
-    from lighttable.core import cache_dir  # late: core imports this module
+    from chuckview.core import cache_dir  # late: core imports this module
     return cache_dir() / "dicom-headers.sqlite"
 
 

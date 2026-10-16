@@ -34,7 +34,7 @@ from PyQt6.QtCore import QRect, QSize, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PyQt6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
-from lighttable.core import config_dir
+from chuckview.core import config_dir
 
 # --- The material ---------------------------------------------------------------------
 # One ground, one ink, one rule. The picture is the only bright thing on screen and the
@@ -95,12 +95,12 @@ class PanelState:
 # rather than taking the layout down.
 
 def layout_file() -> Path:
-    return config_dir() / "lighttable-panels.txt"
+    return config_dir() / "panels.txt"
 
 
 def format_layout(states: Iterable[PanelState]) -> str:
     lines = [f"{state.name} {state.width} {int(state.open)}" for state in states]
-    return "# Light Table columns — name width open\n" + "\n".join(lines) + "\n"
+    return "# ChuckView columns — name width open\n" + "\n".join(lines) + "\n"
 
 
 def parse_layout(text: str, defaults: Iterable[PanelState]) -> dict[str, PanelState]:
